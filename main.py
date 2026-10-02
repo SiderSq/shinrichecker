@@ -13,11 +13,13 @@ import threading
 import time
 import webbrowser
 
+
 def setup_windows_console() -> bool:
     """Attach to existing console if invoked from CMD or PowerShell in GUI mode."""
     if sys.platform == "win32":
         try:
             import ctypes
+
             if ctypes.windll.kernel32.AttachConsole(-1):
                 try:
                     sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
@@ -38,6 +40,7 @@ def setup_windows_console() -> bool:
         except Exception:
             pass
     return False
+
 
 setup_windows_console()
 
@@ -70,7 +73,8 @@ def main() -> int:
         help="Запустить в консольном режиме командной строки",
     )
     mode_group.add_argument(
-        "-i", "--interactive",
+        "-i",
+        "--interactive",
         action="store_true",
         help="Интерактивный ввод списка игроков через терминал",
     )
@@ -78,12 +82,14 @@ def main() -> int:
     # CLI Inputs
     cli_group = parser.add_argument_group("Параметры ввода (для CLI)")
     cli_group.add_argument(
-        "--input", "-f",
+        "--input",
+        "-f",
         type=str,
         help="Путь к файлу со списком игроков (.txt, .csv, .json)",
     )
     cli_group.add_argument(
-        "--players", "-p",
+        "--players",
+        "-p",
         type=str,
         help="Список игроков через запятую (например: 'Hunk, mercyflower^-^, 35262')",
     )
@@ -91,13 +97,15 @@ def main() -> int:
     # Ranking configuration
     rank_group = parser.add_argument_group("Настройка рейтинга")
     rank_group.add_argument(
-        "--top", "-n",
+        "--top",
+        "-n",
         type=int,
         default=10,
         help="Количество мест в топе лучших и антитопе худших игроков (по умолчанию: 10)",
     )
     rank_group.add_argument(
-        "--min-reviews", "-m",
+        "--min-reviews",
+        "-m",
         type=int,
         default=1,
         help="Минимальное количество отзывов для попадания в рейтинг (по умолчанию: 1)",
@@ -173,16 +181,30 @@ def main() -> int:
 
     # Web Server configuration
     web_group = parser.add_argument_group("Настройки веб-сервера")
-    web_group.add_argument("--host", type=str, default="127.0.0.1", help="Хост веб-сервера (по умолчанию: 127.0.0.1)")
-    web_group.add_argument("--port", type=int, default=8088, help="Порт веб-сервера (по умолчанию: 8088)")
-    web_group.add_argument("--no-browser", action="store_true", help="Не открывать браузер автоматически")
+    web_group.add_argument(
+        "--host", type=str, default="127.0.0.1", help="Хост веб-сервера (по умолчанию: 127.0.0.1)"
+    )
+    web_group.add_argument(
+        "--port", type=int, default=8088, help="Порт веб-сервера (по умолчанию: 8088)"
+    )
+    web_group.add_argument(
+        "--no-browser", action="store_true", help="Не открывать браузер автоматически"
+    )
 
     # Other
-    parser.add_argument("--plain", action="store_true", help="Использовать простой текстовый вывод без форматирования")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Тихий режим без служебных сообщений")
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Использовать простой текстовый вывод без форматирования",
+    )
+    parser.add_argument(
+        "--quiet", "-q", action="store_true", help="Тихий режим без служебных сообщений"
+    )
     parser.add_argument("--debug", action="store_true", help="Включить подробный вывод отладки")
 
     args = parser.parse_args()
+    if args.top < 1 or args.min_reviews < 0 or not 0 <= args.port <= 65535:
+        parser.error("Проверьте --top (>=1), --min-reviews (>=0) и --port (0..65535)")
 
     # Logging setup
     log_level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
@@ -210,7 +232,8 @@ def main() -> int:
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.kernel32.SetConsoleTitleW("★ Shinri Reviews Ranker (DRO Edition) v2.0 ★")
+
+            ctypes.windll.kernel32.SetConsoleTitleW("★ Shinri Reviews Ranker (DRO Edition) v2.1 ★")
         except Exception:
             pass
 
@@ -235,20 +258,24 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
     # Если запрошен явный режим работы через браузер
     if getattr(args, "browser", False):
         print("=" * 70, flush=True)
-        print("  ★ SHINRI REVIEWS RANKER (DRO EDITION) v2.0 ★", flush=True)
+        print("  ★ SHINRI REVIEWS RANKER (DRO EDITION) v2.1 ★", flush=True)
         print(f"  ✓ Локальный веб-сервер запущен: {url}", flush=True)
         print("  ✓ Открываем панель управления в браузере...", flush=True)
         print("=" * 70, flush=True)
         if not getattr(args, "no_browser", False):
+
             def open_browser():
                 time.sleep(0.6)
                 webbrowser.open(url)
+
             threading.Thread(target=open_browser, daemon=True).start()
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
+        server.shutdown()
+        server.server_close()
         return 0
 
     # Полноценная отдельная оконная программа (Standalone Desktop Window)
@@ -266,7 +293,10 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
         if sys.platform == "win32":
             try:
                 import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("shinri.dro.ranker.v2")
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "shinri.dro.ranker.v2"
+                )
             except Exception:
                 pass
             # Optimize Edge WebView2 Chromium runtime: disable telemetry and background network overhead
@@ -279,8 +309,6 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
                 "--disable-domain-reliability "
                 "--disable-extensions "
                 "--disable-features=Translate,OptimizationHints,MediaRouter "
-                "--disable-hang-monitor "
-                "--disable-ipc-flooding-protection "
                 "--disable-renderer-backgrounding "
                 "--disable-sync "
                 "--force-color-profile=srgb "
@@ -288,7 +316,7 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
             )
 
         window = webview.create_window(
-            title="★ Shinri Reviews Ranker (DRO Edition) v2.0 ★",
+            title="★ Shinri Reviews Ranker (DRO Edition) v2.1 ★",
             url=url,
             width=1260,
             height=820,
@@ -308,14 +336,16 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
     # Резервный режим на случай, если графическая подсистема Windows повреждена
     if not gui_started:
         print("=" * 70, flush=True)
-        print("  ★ SHINRI REVIEWS RANKER (DRO EDITION) v2.0 ★", flush=True)
+        print("  ★ SHINRI REVIEWS RANKER (DRO EDITION) v2.1 ★", flush=True)
         print(f"  ✓ Сервер запущен: {url}", flush=True)
         print("  ✓ Открываем панель управления в браузере...", flush=True)
         print("=" * 70, flush=True)
         if not getattr(args, "no_browser", False):
+
             def open_browser():
                 time.sleep(0.6)
                 webbrowser.open(url)
+
             threading.Thread(target=open_browser, daemon=True).start()
         try:
             while True:
@@ -339,6 +369,7 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as exc:
         import traceback
+
         traceback.print_exc()
         print("\n" + "=" * 70)
         print(" [ОШИБКА] Произошла непредвиденная ошибка при выполнении программы.")
@@ -350,4 +381,3 @@ if __name__ == "__main__":
         except Exception:
             pass
         sys.exit(1)
-

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shinri-ranker"
+version = "2.1.0"
+description = "Local lobby checker for Shinri Reviews and Danganronpa Online"
+requires-python = ">=3.10"
+dependencies = ["Pillow>=11.3,<13", "rich>=14.1,<15"]
+
+[project.optional-dependencies]
+desktop = ["pywebview>=6,<7", "pythonnet>=3,<4; sys_platform == 'win32'"]
+windows-ocr = [
+ "winrt-runtime>=3.2,<4; sys_platform == 'win32'",
+ "winrt-Windows.Foundation>=3.2,<4; sys_platform == 'win32'",
+ "winrt-Windows.Foundation.Collections>=3.2,<4; sys_platform == 'win32'",
+ "winrt-Windows.Globalization>=3.2,<4; sys_platform == 'win32'",
+ "winrt-Windows.Graphics.Imaging>=3.2,<4; sys_platform == 'win32'",
+ "winrt-Windows.Media.Ocr>=3.2,<4; sys_platform == 'win32'",
+ "winrt-Windows.Storage.Streams>=3.2,<4; sys_platform == 'win32'",
+]
+build = ["pyinstaller>=6.16,<7"]
+
+[tool.setuptools.packages.find]
+include = ["shinri_ranker*"]
+
+[tool.setuptools.package-data]
+shinri_ranker = ["static/*"]

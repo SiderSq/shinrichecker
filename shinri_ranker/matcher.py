@@ -12,15 +12,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .client import ShinriClient
+import logging
+import time
+from .client import ShinriClient, ShinriNetworkError
+
+logger = logging.getLogger(__name__)
 
 
 class MatchStatus(str, Enum):
-    MATCHED = "matched"              # Successfully matched with rating
-    UNRATED = "unrated"              # Profile exists, but 0 reviews / rating unavailable
-    AMBIGUOUS = "ambiguous"          # Multiple profiles match the name
-    MISSING = "missing"              # Profile not found on site
-    DUPLICATE = "duplicate"          # Duplicate entry in input
+    MATCHED = "matched"  # Successfully matched with rating
+    UNRATED = "unrated"  # Profile exists, but 0 reviews / rating unavailable
+    AMBIGUOUS = "ambiguous"  # Multiple profiles match the name
+    MISSING = "missing"  # Profile not found on site
+    DUPLICATE = "duplicate"  # Duplicate entry in input
 
 
 @dataclass
@@ -73,9 +77,32 @@ class ChatLogExtractor:
 
     # Stopwords to filter out system messages and generic tokens
     STOP_WORDS = {
-        "система", "сервер", "server", "system", "комната", "room", "лобби", "lobby",
-        "хост", "host", "игра", "game", "старт", "start", "триал", "trial", "чат", "chat",
-        "участники", "игроки", "players", "members", "админ", "admin", "бот", "bot"
+        "система",
+        "сервер",
+        "server",
+        "system",
+        "комната",
+        "room",
+        "лобби",
+        "lobby",
+        "хост",
+        "host",
+        "игра",
+        "game",
+        "старт",
+        "start",
+        "триал",
+        "trial",
+        "чат",
+        "chat",
+        "участники",
+        "игроки",
+        "players",
+        "members",
+        "админ",
+        "admin",
+        "бот",
+        "bot",
     }
 
     # Precompiled regex patterns for speed
@@ -103,7 +130,11 @@ class ChatLogExtractor:
             # Pattern 1: Lobby player list header: "Комната: P1, P2, P3" or "Игроки: P1, P2"
             lobby_match = cls.RE_LOBBY_HEADER.search(clean)
             if lobby_match:
-                names = [n.strip() for n in cls.RE_NAME_DELIMITERS.split(lobby_match.group(1)) if n.strip()]
+                names = [
+                    n.strip()
+                    for n in cls.RE_NAME_DELIMITERS.split(lobby_match.group(1))
+                    if n.strip()
+                ]
                 for name in names:
                     if name.lower() not in cls.STOP_WORDS and name.lower() not in seen:
                         seen.add(name.lower())
@@ -185,7 +216,16 @@ class InputParser:
             ]
 
         # Automatic detection: check if text looks like a game/chat log
-        if any(kw in text.lower() for kw in ["вошел в комнату", "вошла в комнату", "joined the room", "комната #", "лобби #"]):
+        if any(
+            kw in text.lower()
+            for kw in [
+                "вошел в комнату",
+                "вошла в комнату",
+                "joined the room",
+                "комната #",
+                "лобби #",
+            ]
+        ):
             extracted = ChatLogExtractor.extract_from_log(text)
             if extracted:
                 return [
@@ -203,9 +243,14 @@ class InputParser:
                 return parsed_csv
 
         from .ocr import OcrProcessor, DE_HOMOGLYPH_MAP
+
         for idx, line in enumerate(lines, start=1):
             cl = line.strip()
-            if not cl or cl.startswith(("#", "//")):
+            if (
+                not cl
+                or cl.startswith("//")
+                or (cl.startswith("#") and not re.fullmatch(r"#\s*\d+", cl))
+            ):
                 continue
             if OcrProcessor.is_danganronpa_character(cl):
                 continue
@@ -221,7 +266,13 @@ class InputParser:
 
     @classmethod
     def _try_parse_csv(cls, text: str) -> Optional[List[ParseItem]]:
-        valid_lines = [l for l in text.splitlines() if l.strip() and not l.strip().startswith(("#", "//"))]
+        valid_lines = [
+            l
+            for l in text.splitlines()
+            if l.strip()
+            and not l.strip().startswith("//")
+            and (not l.strip().startswith("#") or re.match(r"#\s*\d+(?:[,;\t]|$)", l.strip()))
+        ]
         if not valid_lines:
             return None
         clean_text = "\n".join(valid_lines)
@@ -245,7 +296,19 @@ class InputParser:
                 continue
 
             if not header_skipped:
-                header_words = {"name", "player", "имя", "игрок", "ник", "nick", "nickname", "url", "link", "ссылка", "id"}
+                header_words = {
+                    "name",
+                    "player",
+                    "имя",
+                    "игрок",
+                    "ник",
+                    "nick",
+                    "nickname",
+                    "url",
+                    "link",
+                    "ссылка",
+                    "id",
+                }
                 if any(c.lower() in header_words for c in cells):
                     header_skipped = True
                     continue
@@ -254,7 +317,9 @@ class InputParser:
             if header_skipped:
                 chosen_cell = None
                 for cell in cells:
-                    if any(p.search(cell) for p in cls.URL_ID_PATTERNS) or cls.NUMERIC_ID_PATTERN.match(cell):
+                    if any(
+                        p.search(cell) for p in cls.URL_ID_PATTERNS
+                    ) or cls.NUMERIC_ID_PATTERN.match(cell):
                         chosen_cell = cell
                         break
                 if not chosen_cell:
@@ -265,9 +330,19 @@ class InputParser:
                     item_counter += 1
             else:
                 # If row has exactly 2 cells and one is a URL/ID while the other is a name, treat as 1 player
-                has_url_or_id = any(any(p.search(c) for p in cls.URL_ID_PATTERNS) or cls.NUMERIC_ID_PATTERN.match(c) for c in cells)
+                has_url_or_id = any(
+                    any(p.search(c) for p in cls.URL_ID_PATTERNS) or cls.NUMERIC_ID_PATTERN.match(c)
+                    for c in cells
+                )
                 if len(cells) == 2 and has_url_or_id:
-                    chosen_cell = cells[1] if (any(p.search(cells[1]) for p in cls.URL_ID_PATTERNS) or cls.NUMERIC_ID_PATTERN.match(cells[1])) else cells[0]
+                    chosen_cell = (
+                        cells[1]
+                        if (
+                            any(p.search(cells[1]) for p in cls.URL_ID_PATTERNS)
+                            or cls.NUMERIC_ID_PATTERN.match(cells[1])
+                        )
+                        else cells[0]
+                    )
                     item = cls.parse_line(chosen_cell, item_counter)
                     if item:
                         items.append(item)
@@ -288,6 +363,10 @@ class ProfileMatcher:
 
     def __init__(self, client: ShinriClient):
         self.client = client
+        from .fuzzy import FuzzyMatcher
+
+        self.fuzzy = FuzzyMatcher(client)
+        self._lookup_errors = set()
 
     def process_items(
         self,
@@ -303,8 +382,9 @@ class ProfileMatcher:
                 if item.extracted_id is not None:
                     pid = item.extracted_id
                     if not self.client.find_by_id(pid):
-                        if (pid not in getattr(self.client, "_online_id_cache", {}) and
-                            pid not in getattr(self.client, "_negative_id_cache", set())):
+                        if pid not in getattr(
+                            self.client, "_online_id_cache", {}
+                        ) and pid not in getattr(self.client, "_negative_id_cache", set()):
                             unresolved_ids.add(pid)
                 else:
                     name = (item.extracted_name or item.raw_text).strip()
@@ -312,6 +392,7 @@ class ProfileMatcher:
                         has_clan = False
                         try:
                             from .analytics import ClanDetector
+
                             clan_tag, clean_name = ClanDetector.extract_clan(name)
                             if clan_tag and clean_name and self.client.find_by_name(clean_name):
                                 has_clan = True
@@ -319,19 +400,37 @@ class ProfileMatcher:
                             pass
                         if not has_clan:
                             name_lower = name.lower()
-                            if (name_lower not in getattr(self.client, "_online_name_cache", {}) and
-                                name_lower not in getattr(self.client, "_negative_name_cache", set())):
+                            if name_lower not in getattr(
+                                self.client, "_online_name_cache", {}
+                            ) and name_lower not in getattr(
+                                self.client, "_negative_name_cache", set()
+                            ):
                                 unresolved_names.add(name)
 
             if unresolved_names or unresolved_ids:
                 max_w = min(8, len(unresolved_names) + len(unresolved_ids))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as executor:
-                    futures = []
-                    for n in unresolved_names:
-                        futures.append(executor.submit(self.client.fetch_player_online_by_name, n))
-                    for pid in unresolved_ids:
-                        futures.append(executor.submit(self.client.fetch_player_online_by_id, pid))
-                    concurrent.futures.wait(futures, timeout=8.0)
+                deadline = time.monotonic() + 8.0
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_w)
+
+                def lookup(kind, value):
+                    with self.client.lookup_deadline(deadline):
+                        if kind == "name":
+                            return self.client.fetch_player_online_by_name(value)
+                        return self.client.fetch_player_online_by_id(value)
+
+                jobs = {executor.submit(lookup, "name", n): n.lower() for n in unresolved_names}
+                jobs.update({executor.submit(lookup, "id", pid): pid for pid in unresolved_ids})
+                done, pending = concurrent.futures.wait(jobs, timeout=8.0)
+                for future in done:
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        self._lookup_errors.add(jobs[future])
+                        logger.warning("Поиск профиля недоступен: %s", exc)
+                for future in pending:
+                    self._lookup_errors.add(jobs[future])
+                    future.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
 
         results: List[PlayerResult] = []
         seen_exact_inputs: Dict[str, PlayerResult] = {}
@@ -361,7 +460,30 @@ class ProfileMatcher:
                 continue
 
             # 2. Match
-            res = self._match_single(item, resolve_ambiguous_strategy, allow_online=allow_online)
+            key = (
+                item.extracted_id
+                if item.extracted_id is not None
+                else (item.extracted_name or item.raw_text).strip().lower()
+            )
+            if key in self._lookup_errors:
+                res = PlayerResult(
+                    input_text=item.raw_text,
+                    line_number=item.line_number,
+                    status=MatchStatus.AMBIGUOUS,
+                    resolution_note="Поиск временно недоступен; повторите запрос или укажите ID",
+                )
+            else:
+                try:
+                    res = self._match_single(
+                        item, resolve_ambiguous_strategy, allow_online=allow_online
+                    )
+                except ShinriNetworkError:
+                    res = PlayerResult(
+                        input_text=item.raw_text,
+                        line_number=item.line_number,
+                        status=MatchStatus.AMBIGUOUS,
+                        resolution_note="Поиск временно недоступен",
+                    )
 
             # 3. Check resolved player ID
             if res.player_id and res.status in (MatchStatus.MATCHED, MatchStatus.UNRATED):
@@ -459,6 +581,7 @@ class ProfileMatcher:
         if not matches:
             try:
                 from .analytics import ClanDetector
+
                 clan_tag, clean_name = ClanDetector.extract_clan(name)
                 if clan_tag and clean_name:
                     clean_matches = self.client.find_by_name(clean_name)
@@ -558,9 +681,7 @@ class ProfileMatcher:
                 )
 
         # 4. Try Fuzzy matching against rated player database
-        from .fuzzy import FuzzyMatcher
-        fuzzy = FuzzyMatcher(self.client)
-        fuzzy_match = fuzzy.find_best_match(name, cutoff=0.75)
+        fuzzy_match = self.fuzzy.find_best_match(name, cutoff=0.75)
         if fuzzy_match:
             cand, ratio = fuzzy_match
             if ratio >= 0.82:

@@ -1,5 +1,5 @@
 """
-Fuzzy matching engine for player nicknames using Levenshtein similarity.
+Fuzzy matching engine for player nicknames using difflib SequenceMatcher similarity.
 Automatically fixes typos in input names and OCR scans against the Shinri database.
 Optimized with O(1) exact checking, candidate length pruning, and cached index tables.
 """
@@ -22,15 +22,18 @@ class FuzzyMatcher:
         self._cached_names: Optional[List[str]] = None
         self._names_by_len: Dict[int, List[str]] = {}
         self._cached_loaded_at: Optional[float] = None
+        self._records = {}
         self._query_cache: Dict[Tuple[str, float], Optional[Tuple[Dict[str, Any], float]]] = {}
 
     def _ensure_cache(self) -> List[str]:
         if not self.client.is_loaded:
             self.client.load_ratings()
 
-        client_loaded_at = getattr(self.client, "_loaded_at", None)
+        client_loaded_at = getattr(self.client, "_generation", 0)
         if self._cached_names is None or self._cached_loaded_at != client_loaded_at:
-            self._cached_names = list(self.client._by_name_lower.keys())
+            with self.client._index_lock:
+                self._records = self.client._by_name_lower
+                self._cached_names = list(self._records.keys())
             self._names_by_len = {}
             for name in self._cached_names:
                 self._names_by_len.setdefault(len(name), []).append(name)
@@ -39,19 +42,24 @@ class FuzzyMatcher:
 
         return self._cached_names
 
-    def find_best_match(self, query: str, cutoff: float = 0.72) -> Optional[Tuple[Dict[str, Any], float]]:
+    def find_best_match(
+        self, query: str, cutoff: float = 0.72
+    ) -> Optional[Tuple[Dict[str, Any], float]]:
         """
         Finds the closest known player name in the ratings database.
         Returns (matched_record, similarity_ratio) or None if no match meets cutoff.
         """
+        self._ensure_cache()
+        if len(self._query_cache) >= 2048:
+            self._query_cache.clear()
         query_clean = query.strip()
         query_lower = query_clean.lower()
         if not query_lower:
             return None
 
         # O(1) Fast path for exact match
-        if query_lower in self.client._by_name_lower:
-            records = self.client._by_name_lower[query_lower]
+        if query_lower in self._records:
+            records = self._records[query_lower]
             if records:
                 chosen = max(records, key=lambda x: x.get("count", 0))
                 return chosen, 1.0
@@ -67,8 +75,8 @@ class FuzzyMatcher:
         # O(1) Homoglyph check for OCR / keyboard typos (Cyrillic to Latin)
         HOMOGLYPH_CYR_TO_LAT = str.maketrans("асеоррухііј", "aceoppyxiij")
         trans_lower = query_lower.translate(HOMOGLYPH_CYR_TO_LAT)
-        if trans_lower != query_lower and trans_lower in self.client._by_name_lower:
-            records = self.client._by_name_lower[trans_lower]
+        if trans_lower != query_lower and trans_lower in self._records:
+            records = self._records[trans_lower]
             if records:
                 chosen = max(records, key=lambda x: x.get("count", 0))
                 res = (chosen, 0.98)
@@ -101,7 +109,9 @@ class FuzzyMatcher:
             candidate_pool = all_names
 
         # Quick close matches via difflib
-        closest = difflib.get_close_matches(query_lower, candidate_pool, n=1, cutoff=effective_cutoff)
+        closest = difflib.get_close_matches(
+            query_lower, candidate_pool, n=1, cutoff=effective_cutoff
+        )
         if not closest:
             self._query_cache[cache_key] = None
             return None
@@ -117,7 +127,7 @@ class FuzzyMatcher:
             self._query_cache[cache_key] = None
             return None
 
-        records = self.client._by_name_lower.get(matched_lower, [])
+        records = self._records.get(matched_lower, [])
         if not records:
             self._query_cache[cache_key] = None
             return None
@@ -155,7 +165,7 @@ class FuzzyMatcher:
 
         for name_lower in closest:
             ratio = difflib.SequenceMatcher(None, query_lower, name_lower).ratio()
-            records = self.client._by_name_lower.get(name_lower, [])
+            records = self._records.get(name_lower, [])
             if records:
                 chosen = max(records, key=lambda x: x.get("count", 0))
                 results.append((chosen, round(ratio, 2)))

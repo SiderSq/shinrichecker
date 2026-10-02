@@ -2,8 +2,8 @@
 # Windows PE Version Information for Shinri Reviews Ranker
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 0, 0),
-    prodvers=(2, 0, 0, 0),
+    filevers=(2, 1, 0, 0),
+    prodvers=(2, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -19,12 +19,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Danganronpa Online Community Tools'),
             StringStruct('FileDescription', 'Shinri Reviews Ranker (DRO Edition)'),
-            StringStruct('FileVersion', '2.0.0.0'),
+            StringStruct('FileVersion', '2.1.0.0'),
             StringStruct('InternalName', 'ShinriRanker'),
             StringStruct('LegalCopyright', 'Copyright (C) 2026 Shinri Reviews Ranker'),
             StringStruct('OriginalFilename', 'ShinriRanker.exe'),
             StringStruct('ProductName', 'Shinri Reviews Ranker'),
-            StringStruct('ProductVersion', '2.0.0.0')
+            StringStruct('ProductVersion', '2.1.0.0')
           ]
         )
       ]

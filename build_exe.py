@@ -10,6 +10,8 @@ import sys
 import shutil
 import subprocess
 import time
+import secrets
+import json
 
 # Ensure UTF-8 output
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -18,10 +20,13 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+
 def run_command(cmd, desc):
     print(f"[{desc}] Выполняется: {' '.join(cmd)}")
     start = time.time()
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    res = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180
+    )
     elapsed = round(time.time() - start, 2)
     if res.returncode != 0:
         print(f"✕ Ошибка на этапе '{desc}' (код {res.returncode}):")
@@ -32,6 +37,7 @@ def run_command(cmd, desc):
         sys.exit(res.returncode)
     print(f"✓ Завершено за {elapsed} сек.")
     return res.stdout
+
 
 def main():
     print("=" * 70)
@@ -59,7 +65,9 @@ def main():
 
     # 3. Build executable via PyInstaller
     print("[3/5] Компиляция через PyInstaller с оптимизацией размера...")
-    run_command([sys.executable, "-m", "PyInstaller", "--clean", "ShinriRanker.spec"], "PyInstaller Build")
+    run_command(
+        [sys.executable, "-m", "PyInstaller", "--clean", "ShinriRanker.spec"], "PyInstaller Build"
+    )
 
     exe_path = os.path.join("dist", "ShinriRanker.exe")
     if not os.path.isfile(exe_path):
@@ -83,17 +91,22 @@ def main():
     shutil.copy2(exe_path, os.path.join(release_dir, "ShinriRanker.exe"))
     shutil.copy2(exe_path, os.path.join(project_dir, "ShinriRanker.exe"))
     if os.path.exists("shinri_ratings_cache.json"):
-        shutil.copy2("shinri_ratings_cache.json", os.path.join(release_dir, "shinri_ratings_cache.json"))
+        shutil.copy2(
+            "shinri_ratings_cache.json", os.path.join(release_dir, "shinri_ratings_cache.json")
+        )
     if os.path.exists("shinri_ratings_cache.json.dat"):
-        shutil.copy2("shinri_ratings_cache.json.dat", os.path.join(release_dir, "shinri_ratings_cache.json.dat"))
+        shutil.copy2(
+            "shinri_ratings_cache.json.dat",
+            os.path.join(release_dir, "shinri_ratings_cache.json.dat"),
+        )
     if os.path.exists("sample_players.txt"):
         shutil.copy2("sample_players.txt", os.path.join(release_dir, "sample_players.txt"))
     if os.path.exists("sample_chat.txt"):
         shutil.copy2("sample_chat.txt", os.path.join(release_dir, "sample_chat.txt"))
 
     # Write quick launchers in release folder (both Russian and universal names)
-    app_bat_content = "@echo off\ncls\nstart \"\" \"%~dp0ShinriRanker.exe\"\n"
-    cli_bat_content = "@echo off\nchcp 65001 > nul\ncls\n\"%~dp0ShinriRanker.exe\" --cli --input \"%~dp0sample_players.txt\" --top 10 --balance-teams --lobby-safety --clans\npause\n"
+    app_bat_content = '@echo off\ncls\nstart "" "%~dp0ShinriRanker.exe"\n'
+    cli_bat_content = '@echo off\nchcp 65001 > nul\ncls\n"%~dp0ShinriRanker.exe" --cli --input "%~dp0sample_players.txt" --top 10 --balance-teams --lobby-safety --clans\npause\n'
 
     for name in ["Запустить_ShinriRanker.bat", "Run_ShinriRanker.bat"]:
         with open(os.path.join(release_dir, name), "w", encoding="utf-8", errors="replace") as f:
@@ -104,7 +117,7 @@ def main():
             f.write(cli_bat_content)
 
     # Readme in release folder
-    readme_content = """★ Shinri Reviews Ranker (DRO Edition) v2.0 ★
+    readme_content = """★ Shinri Reviews Ranker (DRO Edition) v2.1 ★
 ========================================================================
 
 АВТОНОМНАЯ ОКОННАЯ ДЕСКТОПНАЯ ПРОГРАММА ДЛЯ WINDOWS:
@@ -140,22 +153,46 @@ def main():
     # 5. Quick smoke test of compiled exe
     print("[5/5] Экспресс-тестирование собранного ShinriRanker.exe...")
     # 5.1 CLI Smoke Test
-    test_out = run_command([exe_path, "--cli", "-p", "Hunk, mercyflower^-^", "--plain", "--offline"], "CLI Smoke Test")
+    test_out = run_command(
+        [exe_path, "--cli", "-p", "Hunk, mercyflower^-^", "--plain", "--offline"], "CLI Smoke Test"
+    )
     if "Hunk" in test_out and "mercyflower" in test_out:
         print("✓ Тест CLI успешно пройден: exe корректно загрузил кэш и выполнил ранжирование!")
     else:
         print("✕ Ошибка CLI: вывод теста отличается от ожидаемого.")
+        sys.exit(1)
 
     # 5.2 Server Smoke Test
     print("[5/5] Тестирование режима ядра и REST API...")
     import urllib.request
-    test_proc = subprocess.Popen([exe_path, "--browser", "--no-browser", "--port", "9876", "--offline"])
+
+    token = secrets.token_urlsafe(32)
+    test_env = dict(os.environ, SHINRI_API_TOKEN=token)
+    test_proc = subprocess.Popen(
+        [exe_path, "--browser", "--no-browser", "--port", "9876", "--offline"], env=test_env
+    )
     try:
-        time.sleep(2.0)
-        req = urllib.request.urlopen("http://127.0.0.1:9876/api/status", timeout=3)
-        res_data = req.read().decode("utf-8")
+        deadline = time.monotonic() + 20
+        while True:
+            if test_proc.poll() is not None:
+                raise RuntimeError("Сервер завершился до готовности")
+            try:
+                request = urllib.request.Request(
+                    "http://127.0.0.1:9876/api/status", headers={"X-Shinri-Token": token}
+                )
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    res_data = response.read().decode("utf-8")
+                if json.loads(res_data).get("status") == "ok":
+                    break
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Сервер не готов за 20 секунд")
+            time.sleep(0.2)
         if "total_players" in res_data and "status" in res_data:
-            print("✓ Тест ядра сервера успешно пройден: локальный сервер и REST API работают безупречно!")
+            print(
+                "✓ Тест ядра сервера успешно пройден: локальный сервер и REST API работают безупречно!"
+            )
         else:
             print("✕ Ошибка сервера: неожиданный ответ от API.")
             sys.exit(1)
@@ -174,6 +211,7 @@ def main():
     print(f"  • Исполняемый файл: {os.path.abspath(exe_path)}")
     print(f"  • Папка релиза:     {os.path.abspath(release_dir)}")
     print("=" * 70)
+
 
 if __name__ == "__main__":
     main()

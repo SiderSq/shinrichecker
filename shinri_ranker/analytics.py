@@ -10,6 +10,7 @@ Advanced analytics for Shinri Reviews & Danganronpa Online (DRO):
 """
 
 from __future__ import annotations
+from copy import deepcopy
 import math
 import re
 import time
@@ -89,7 +90,7 @@ class ClanDetector:
         """Groups players by clan tag, computes clan averages, and alerts on teaming clusters."""
         clans_map: Dict[str, List[Dict[str, Any]]] = {}
 
-        for p in players:
+        for p in deepcopy(players):
             name = p.get("name") or p.get("input_text", "")
             tag, clean_name = cls.extract_clan(name)
             p["clan_tag"] = tag
@@ -101,23 +102,31 @@ class ClanDetector:
         teaming_warnings = []
 
         for tag, members in clans_map.items():
-            ratings = [float(m.get("avg_rating") or m.get("avg") or 0.0) for m in members if (m.get("avg_rating") or m.get("avg"))]
+            ratings = [
+                float(m.get("avg_rating") or m.get("avg") or 0.0)
+                for m in members
+                if (m.get("avg_rating") or m.get("avg"))
+            ]
             avg_clan_score = round(sum(ratings) / len(ratings), 2) if ratings else 0.0
             member_names = [m.get("name") or m.get("input_text", "Игрок") for m in members]
 
-            clan_summary.append({
-                "tag": tag,
-                "count": len(members),
-                "avg_rating": avg_clan_score,
-                "members": member_names,
-            })
-
-            if len(members) >= 3:
-                teaming_warnings.append({
+            clan_summary.append(
+                {
                     "tag": tag,
                     "count": len(members),
-                    "text": f"Клан '[{tag}]' представлен {len(members)} игроками ({', '.join(member_names)}). Высокий риск тиминга / сговора в матче!",
-                })
+                    "avg_rating": avg_clan_score,
+                    "members": member_names,
+                }
+            )
+
+            if len(members) >= 3:
+                teaming_warnings.append(
+                    {
+                        "tag": tag,
+                        "count": len(members),
+                        "text": f"Клан '[{tag}]' представлен {len(members)} игроками ({', '.join(member_names)}). Общий тег; это не доказательство сговора.",
+                    }
+                )
 
         return {
             "clans": sorted(clan_summary, key=lambda c: -c["count"]),
@@ -133,7 +142,9 @@ class ClanDetector:
             out[c["tag"]] = {
                 "count": c["count"],
                 "avg_score": c["avg_rating"],
-                "avg_elo": EloConverter.rating_to_elo(c["avg_rating"]) if c["avg_rating"] > 0 else 1500,
+                "avg_elo": (
+                    EloConverter.rating_to_elo(c["avg_rating"]) if c["avg_rating"] > 0 else 1500
+                ),
                 "members": c["members"],
             }
         return out
@@ -162,6 +173,7 @@ class TeamBalancer:
         Balances players into Team Blue and Team Red.
         Uses snake greedy allocation + optimized 2-opt pairwise swaps.
         """
+        players = deepcopy(players)
         if not players:
             return {
                 "team_a": [],
@@ -191,9 +203,10 @@ class TeamBalancer:
                 tag, _ = ClanDetector.extract_clan(p.get("name", ""))
                 p["clan_tag"] = tag
 
-        sorted_players = sorted(players, key=lambda p: -get_score(p))
+        sorted_players = sorted(deepcopy(players), key=lambda p: -get_score(p))
         n = len(sorted_players)
         half = (n + 1) // 2
+        other_half = n // 2
 
         team_a: List[Dict[str, Any]] = []
         team_b: List[Dict[str, Any]] = []
@@ -204,7 +217,7 @@ class TeamBalancer:
         for p in sorted_players:
             sc = get_score(p)
             if equal_team_sizes:
-                if len(team_a) < half and (len(team_b) >= half or score_a <= score_b):
+                if len(team_a) < half and (len(team_b) >= other_half or score_a <= score_b):
                     team_a.append(p)
                     score_a += sc
                 else:
@@ -224,7 +237,7 @@ class TeamBalancer:
         while improved and iterations < 40:
             iterations += 1
             improved = False
-            current_diff = abs(score_a - score_b)
+            current_diff = abs(score_a / max(1, len(team_a)) - score_b / max(1, len(team_b)))
             if current_diff < 0.05:
                 break  # Optimal balance achieved
 
@@ -236,7 +249,9 @@ class TeamBalancer:
                     sc_b = get_score(b)
                     new_score_a = score_a - sc_a + sc_b
                     new_score_b = score_b - sc_b + sc_a
-                    new_diff = abs(new_score_a - new_score_b)
+                    new_diff = abs(
+                        new_score_a / max(1, len(team_a)) - new_score_b / max(1, len(team_b))
+                    )
                     if new_diff < current_diff - 1e-4:
                         current_diff = new_diff
                         best_swap = (i, j, new_score_a, new_score_b)
@@ -269,6 +284,7 @@ class TeamBalancer:
             "fairness": round(fairness, 1),
             "elo_a": team_a_elo,
             "elo_b": team_b_elo,
+            "prediction_kind": "rating_heuristic_not_calibrated",
             "win_prob_a": win_a,
             "win_prob_b": win_b,
         }
@@ -281,6 +297,7 @@ class TeamBalancer:
         metric: str = "bayesian_score",
     ) -> Dict[str, Any]:
         """Calculates balance, Elo, and win probability for custom/manually swapped rosters."""
+
         def get_score(p: Dict[str, Any]) -> float:
             val = p.get(metric) or p.get("avg_rating") or p.get("avg") or 0.0
             return float(val)
@@ -314,6 +331,7 @@ class TeamBalancer:
             "fairness": round(fairness, 1),
             "elo_a": team_a_elo,
             "elo_b": team_b_elo,
+            "prediction_kind": "rating_heuristic_not_calibrated",
             "win_prob_a": win_a,
             "win_prob_b": win_b,
         }
@@ -353,36 +371,44 @@ class LobbySafetyMeter:
             # High risk condition: rating <= 2.2 with at least 2 reviews
             if avg <= 2.2 and reviews >= 2:
                 danger_players.append(p)
-                warnings.append({
-                    "severity": "danger",
-                    "player_id": p.get("player_id"),
-                    "name": name,
-                    "text": f"Игрок '{name}' имеет критически низкий рейтинг (★ {avg:.2f}, {reviews} отз.) — высокий риск лива или токсичности.",
-                })
+                warnings.append(
+                    {
+                        "severity": "danger",
+                        "player_id": p.get("player_id"),
+                        "name": name,
+                        "text": f"Игрок '{name}' имеет критически низкий рейтинг (★ {avg:.2f}, {reviews} отз.) — сигнал по отзывам, не прогноз поведения.",
+                    }
+                )
             elif avg <= 3.0:
-                warnings.append({
-                    "severity": "warning",
-                    "player_id": p.get("player_id"),
-                    "name": name,
-                    "text": f"Игрок '{name}' имеет средний балл ниже среднего (★ {avg:.2f}).",
-                })
+                warnings.append(
+                    {
+                        "severity": "warning",
+                        "player_id": p.get("player_id"),
+                        "name": name,
+                        "text": f"Игрок '{name}' имеет средний балл ниже среднего (★ {avg:.2f}).",
+                    }
+                )
 
         for p in unrated_players:
             name = p.get("name") or p.get("input_text", "Новичок")
-            warnings.append({
-                "severity": "info",
-                "name": name,
-                "text": f"Игрок '{name}' не имеет оценок (0 отзывов) — уровень игры неизвестен.",
-            })
+            warnings.append(
+                {
+                    "severity": "info",
+                    "name": name,
+                    "text": f"Игрок '{name}' не имеет оценок (0 отзывов) — уровень игры неизвестен.",
+                }
+            )
 
         # Clan meta-analysis for teaming
         clan_info = ClanDetector.analyze_clans(all_players)
         for warn in clan_info.get("teaming_warnings", []):
-            warnings.append({
-                "severity": "warning",
-                "name": f"Клан [{warn['tag']}]",
-                "text": warn["text"],
-            })
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "name": f"Клан [{warn['tag']}]",
+                    "text": warn["text"],
+                }
+            )
 
         # Calculate safety index
         base_score = 100.0
@@ -390,7 +416,7 @@ class LobbySafetyMeter:
         base_score -= len(clan_info.get("teaming_warnings", [])) * 10.0
 
         unrated_ratio = unrated_count / total if total else 0
-        base_score -= (unrated_ratio * 12.0)
+        base_score -= unrated_ratio * 12.0
         safety_score = max(5, min(100, int(round(base_score))))
 
         if safety_score >= 80:
@@ -403,7 +429,7 @@ class LobbySafetyMeter:
             color = "#f59e0b"
         else:
             status = "risk"
-            label = "Высокий риск ливеров / троллей (High Risk)"
+            label = "Низкий индекс отзывов (High Risk)"
             color = "#ef4444"
 
         return {
@@ -438,7 +464,7 @@ class TournamentGenerator:
         def get_score(p: Dict[str, Any]) -> float:
             return float(p.get(metric) or p.get("avg_rating") or p.get("avg") or 0.0)
 
-        sorted_players = sorted(players, key=lambda p: -get_score(p))
+        sorted_players = sorted(deepcopy(players), key=lambda p: -get_score(p))
 
         if format_type == "round_robin":
             return cls._generate_round_robin(sorted_players)
@@ -446,43 +472,47 @@ class TournamentGenerator:
             return cls._generate_single_elimination(sorted_players)
 
     @classmethod
-    def generate_single_elimination(cls, players: List[Dict[str, Any]], metric: str = "bayesian_score") -> Dict[str, Any]:
+    def generate_single_elimination(
+        cls, players: List[Dict[str, Any]], metric: str = "bayesian_score"
+    ) -> Dict[str, Any]:
         """Convenience method for single elimination brackets."""
         return cls.generate_bracket(players, format_type="single_elimination", metric=metric)
 
     @classmethod
-    def generate_round_robin(cls, players: List[Dict[str, Any]], metric: str = "bayesian_score") -> Dict[str, Any]:
+    def generate_round_robin(
+        cls, players: List[Dict[str, Any]], metric: str = "bayesian_score"
+    ) -> Dict[str, Any]:
         """Convenience method for round robin groups."""
         return cls.generate_bracket(players, format_type="round_robin", metric=metric)
 
     @classmethod
     def _generate_single_elimination(cls, sorted_players: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # Determine bracket size: 4, 8, 16, or 32
         n = len(sorted_players)
-        if n >= 16:
-            bracket_size = 16
-        elif n >= 8:
-            bracket_size = 8
-        else:
-            bracket_size = 4
-
-        seeded = sorted_players[:bracket_size]
-
-        # Standard tournament pairing seeds (1 vs N, 2 vs N-1, etc.)
-        pairings_map = {
-            4: [(1, 4), (2, 3)],
-            8: [(1, 8), (4, 5), (2, 7), (3, 6)],
-            16: [(1, 16), (8, 9), (4, 13), (5, 12), (2, 15), (7, 10), (3, 14), (6, 11)],
-        }
-        pairs = pairings_map.get(bracket_size, pairings_map[4])
+        if n > 128:
+            raise ValueError("Максимум 128 участников турнира")
+        bracket_size = 1 << (n - 1).bit_length()
+        seeded = sorted_players + [None] * (bracket_size - n)
+        # Recursive seed order: highest seeds in opposite bracket halves.
+        order = [1, 2]
+        size = 2
+        while size < bracket_size:
+            size *= 2
+            order = [seed for old in order for seed in (old, size + 1 - old)]
+        pairs = list(zip(order[::2], order[1::2]))
 
         round_1_matches = []
         for idx, (s1, s2) in enumerate(pairs, start=1):
             p1 = seeded[s1 - 1]
             p2 = seeded[s2 - 1] if s2 <= len(seeded) else None
 
+            if p1 is None:
+                p1, p2, s1, s2 = p2, p1, s2, s1
             elo1 = EloConverter.rating_to_elo(p1.get("avg_rating") or p1.get("avg") or 4.0)
-            elo2 = EloConverter.rating_to_elo(p2.get("avg_rating") or p2.get("avg") or 4.0) if p2 else 800
+            elo2 = (
+                EloConverter.rating_to_elo(p2.get("avg_rating") or p2.get("avg") or 4.0)
+                if p2
+                else 800
+            )
             win1, win2 = EloConverter.win_probability(elo1, elo2) if p2 else (100.0, 0.0)
 
             p1_name = p1.get("name") or p1.get("input_text", "Игрок 1")
@@ -499,7 +529,9 @@ class TournamentGenerator:
                 "player1": {
                     "name": p1_name,
                     "seed": s1,
-                    "score": float(p1.get("bayesian_score") or p1.get("avg_rating") or p1.get("avg") or 0.0),
+                    "score": float(
+                        p1.get("bayesian_score") or p1.get("avg_rating") or p1.get("avg") or 0.0
+                    ),
                     "elo": elo1,
                     "avatar_url": p1.get("avatar_url"),
                     "is_bye": False,
@@ -507,7 +539,13 @@ class TournamentGenerator:
                 "player2": {
                     "name": p2_name,
                     "seed": s2,
-                    "score": float(p2.get("bayesian_score") or p2.get("avg_rating") or p2.get("avg") or 0.0) if p2 else 0.0,
+                    "score": (
+                        float(
+                            p2.get("bayesian_score") or p2.get("avg_rating") or p2.get("avg") or 0.0
+                        )
+                        if p2
+                        else 0.0
+                    ),
                     "elo": elo2,
                     "avatar_url": p2.get("avatar_url") if p2 else None,
                     "is_bye": p2 is None,
@@ -520,13 +558,49 @@ class TournamentGenerator:
             }
             round_1_matches.append(m_obj)
 
-        round_name = "1/8 Финала" if bracket_size == 16 else ("Четвертьфинал" if bracket_size == 8 else "Полуфинал")
+        def round_label(size):
+            return (
+                "Финал"
+                if size == 2
+                else (
+                    "Полуфинал"
+                    if size == 4
+                    else ("Четвертьфинал" if size == 8 else f"1/{size//2} финала")
+                )
+            )
+
+        round_name = round_label(bracket_size)
         rounds = [{"round_name": round_name, "matches": round_1_matches}]
+        previous_ids = [m["match_id"] for m in round_1_matches]
+        remaining, round_index = bracket_size // 2, 2
+        while remaining >= 2:
+            future = []
+            for idx in range(remaining // 2):
+                source_a, source_b = previous_ids[2 * idx : 2 * idx + 2]
+                name_a, name_b = f"Победитель {source_a}", f"Победитель {source_b}"
+                future.append(
+                    {
+                        "match_id": f"R{round_index}-M{idx+1}",
+                        "match_num": idx + 1,
+                        "source_match_1": source_a,
+                        "source_match_2": source_b,
+                        "player1": {"name": name_a, "is_bye": False},
+                        "player2": {"name": name_b, "is_bye": False},
+                        "player_1": None,
+                        "player_2": None,
+                        "predicted_winner": "—",
+                        "pending": True,
+                    }
+                )
+            rounds.append({"round_name": round_label(remaining), "matches": future})
+            previous_ids = [m["match_id"] for m in future]
+            remaining //= 2
+            round_index += 1
 
         return {
             "format": "single_elimination",
             "bracket_size": bracket_size,
-            "total_participants": len(seeded),
+            "total_participants": n,
             "first_round_name": round_name,
             "matches": round_1_matches,
             "rounds": rounds,
@@ -535,11 +609,11 @@ class TournamentGenerator:
     @classmethod
     def _generate_round_robin(cls, sorted_players: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generates balanced 4-player groups using snake seeding."""
-        num_groups = max(1, len(sorted_players) // 4)
+        num_groups = max(1, math.ceil(len(sorted_players) / 4))
         groups: Dict[str, List[Dict[str, Any]]] = {chr(65 + i): [] for i in range(num_groups)}
 
         # Snake draft distribution across groups
-        for idx, p in enumerate(sorted_players[:num_groups * 4]):
+        for idx, p in enumerate(sorted_players):
             cycle = idx // num_groups
             slot = idx % num_groups
             group_idx = slot if cycle % 2 == 0 else (num_groups - 1 - slot)
@@ -559,22 +633,26 @@ class TournamentGenerator:
                     win1, win2 = EloConverter.win_probability(elo1, elo2)
                     p1_name = p1.get("name") or p1.get("input_text", "Игрок")
                     p2_name = p2.get("name") or p2.get("input_text", "Игрок")
-                    g_matches.append({
-                        "match_id": f"Group-{g_letter}-M{m_id}",
-                        "player_1": p1,
-                        "player_2": p2,
-                        "player1": p1_name,
-                        "player2": p2_name,
-                        "win_chance_p1": win1,
-                        "win_chance_p2": win2,
-                        "win_prob1": round(win1 / 100.0, 2),
-                        "win_prob2": round(win2 / 100.0, 2),
-                    })
+                    g_matches.append(
+                        {
+                            "match_id": f"Group-{g_letter}-M{m_id}",
+                            "player_1": p1,
+                            "player_2": p2,
+                            "player1": p1_name,
+                            "player2": p2_name,
+                            "win_chance_p1": win1,
+                            "win_chance_p2": win2,
+                            "win_prob1": round(win1 / 100.0, 2),
+                            "win_prob2": round(win2 / 100.0, 2),
+                        }
+                    )
                     m_id += 1
 
             for s_idx, p in enumerate(g_players, 1):
                 p["seed"] = s_idx
-                p["score"] = float(p.get("bayesian_score") or p.get("avg_rating") or p.get("avg") or 0.0)
+                p["score"] = float(
+                    p.get("bayesian_score") or p.get("avg_rating") or p.get("avg") or 0.0
+                )
                 p["elo"] = EloConverter.rating_to_elo(p.get("avg_rating") or p.get("avg") or 4.0)
 
             fixtures[f"Группа {g_letter}"] = {
@@ -587,7 +665,7 @@ class TournamentGenerator:
             "format": "round_robin",
             "groups_count": num_groups,
             "groups": fixtures,
-            "total_participants": len(sorted_players[:num_groups * 4]),
+            "total_participants": len(sorted_players),
         }
 
 
@@ -595,17 +673,74 @@ class SentimentAnalyzer:
     """Analyzes player reviews for tone, sentiment polarity, and behavioral tags."""
 
     POSITIVE_WORDS = {
-        "логика", "логичный", "детектив", "скилл", "скилловый", "тащит", "тащер", "алиби",
-        "умный", "добрый", "топ", "лучший", "красавчик", "молодец", "активный", "сильный",
-        "адекватный", "честный", "помогает", "опытный", "respect", "pro", "skill", "good",
-        "nice", "friendly", "классно", "крутой", "супер", "четко", "гений", "базирован"
+        "логика",
+        "логичный",
+        "детектив",
+        "скилл",
+        "скилловый",
+        "тащит",
+        "тащер",
+        "алиби",
+        "умный",
+        "добрый",
+        "топ",
+        "лучший",
+        "красавчик",
+        "молодец",
+        "активный",
+        "сильный",
+        "адекватный",
+        "честный",
+        "помогает",
+        "опытный",
+        "respect",
+        "pro",
+        "skill",
+        "good",
+        "nice",
+        "friendly",
+        "классно",
+        "крутой",
+        "супер",
+        "четко",
+        "гений",
+        "базирован",
     }
 
     NEGATIVE_WORDS = {
-        "токсик", "токсичный", "руин", "руинер", "лив", "ливер", "афк", "afk", "тролль",
-        "троллит", "неадекват", "спам", "спамит", "бан", "слив", "сливает", "обман", "чсв",
-        "нытик", "нытье", "оскорбляет", "clown", "feeder", "troll", "toxic", "leaver",
-        "noob", "bad", "ливнул", "руинил", "тупой", "орет", "душит"
+        "токсик",
+        "токсичный",
+        "руин",
+        "руинер",
+        "лив",
+        "ливер",
+        "афк",
+        "afk",
+        "тролль",
+        "троллит",
+        "неадекват",
+        "спам",
+        "спамит",
+        "бан",
+        "слив",
+        "сливает",
+        "обман",
+        "чсв",
+        "нытик",
+        "нытье",
+        "оскорбляет",
+        "clown",
+        "feeder",
+        "troll",
+        "toxic",
+        "leaver",
+        "noob",
+        "bad",
+        "ливнул",
+        "руинил",
+        "тупой",
+        "орет",
+        "душит",
     }
 
     @classmethod
@@ -627,8 +762,11 @@ class SentimentAnalyzer:
 
         for rev in reviews:
             text = (rev.get("text") or "").lower()
-            tokens = re.findall(r"[a-zA-Zа-яА-ЯёЁ]{3,}", text)
-            for tok in tokens:
+            tokens = re.findall(r"[a-zA-Zа-яА-ЯёЁ]+", text)
+            for idx, tok in enumerate(tokens):
+                negated = any(t in ("не", "not", "нет") for t in tokens[max(0, idx - 2) : idx])
+                if negated:
+                    continue
                 if tok in cls.POSITIVE_WORDS:
                     pos_count += 1
                     tag_freq[tok] = tag_freq.get(tok, 0) + 1
@@ -706,7 +844,7 @@ class PlayerCardGenerator:
             tier = "C"
         else:
             title = "Главный Подозреваемый"
-            archetype = "Ливер / Вредитель"
+            archetype = "Низкий рейтинг по отзывам"
             color = "#ef4444"
             tier = "D"
 
@@ -724,8 +862,10 @@ class PlayerCardGenerator:
             "archetype": archetype,
             "tier": tier,
             "color": color,
-            "avatar_url": player.get("avatar_url") or "https://shinrireviews.com/assets/default-BEeM81pZ.png",
-            "profile_url": player.get("profile_url") or f"https://shinrireviews.com/p/{player.get('player_id')}",
+            "avatar_url": player.get("avatar_url")
+            or "https://shinrireviews.com/assets/default-BEeM81pZ.png",
+            "profile_url": player.get("profile_url")
+            or f"https://shinrireviews.com/p/{player.get('player_id')}",
         }
 
 
@@ -779,12 +919,14 @@ class ReviewRingDetector:
                 b_reviews_a = id_b in reviewed_by.get(id_a, set())
 
                 if a_reviews_b and b_reviews_a:
-                    rings.append({
-                        "player_a_id": id_a,
-                        "player_a_name": names_map.get(id_a, f"ID {id_a}"),
-                        "player_b_id": id_b,
-                        "player_b_name": names_map.get(id_b, f"ID {id_b}"),
-                        "text": f"Обнаружены взаимные отзывы между {names_map.get(id_a, id_a)} и {names_map.get(id_b, id_b)}.",
-                    })
+                    rings.append(
+                        {
+                            "player_a_id": id_a,
+                            "player_a_name": names_map.get(id_a, f"ID {id_a}"),
+                            "player_b_id": id_b,
+                            "player_b_name": names_map.get(id_b, f"ID {id_b}"),
+                            "text": f"Обнаружены взаимные отзывы между {names_map.get(id_a, id_a)} и {names_map.get(id_b, id_b)}.",
+                        }
+                    )
 
         return rings

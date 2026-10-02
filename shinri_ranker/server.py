@@ -13,6 +13,11 @@ import mimetypes
 import os
 import sys
 import socketserver
+import secrets
+import hmac
+import ipaddress
+import threading
+from pathlib import Path
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -32,7 +37,7 @@ from .analytics import (
     SentimentAnalyzer,
     EloConverter,
 )
-from .ocr import OcrProcessor
+from .ocr import OcrProcessor, OcrUnavailable
 
 logger = logging.getLogger("shinri_server")
 
@@ -40,37 +45,178 @@ logger = logging.getLogger("shinri_server")
 class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
+    def __init__(self, *args, **kwargs):
+        self._slots = threading.BoundedSemaphore(16)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, address):
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self._slots.release()
+
 
 class ShinriRequestHandler(BaseHTTPRequestHandler):
     client: ShinriClient
     static_dir: str
     _STATIC_CACHE: Dict[str, Dict[str, Any]] = {}
 
+    api_token: str
+    ocr_slot = threading.BoundedSemaphore(1)
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(10)
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        super().end_headers()
+
+    def _check_access(self, require_token=False):
+        port = self.server.server_address[1]
+        allowed = {f"localhost:{port}", f"127.0.0.1:{port}", f"[::1]:{port}"}
+        host = self.headers.get("Host", "").lower()
+        if host not in allowed:
+            self._send_error("Недопустимый Host", 403)
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin not in {f"http://{h}" for h in allowed}:
+            self._send_error("Запросы с другого сайта запрещены", 403)
+            return False
+        supplied = self.headers.get("X-Shinri-Token", "")
+        if require_token and not hmac.compare_digest(supplied, self.api_token):
+            self._send_error("Недопустимый токен сессии", 403)
+            return False
+        return True
+
+    def _serve_index(self):
+        path = Path(self.static_dir) / "index.html"
+        content = path.read_text(encoding="utf-8")
+        content = content.replace(
+            "<!--SHINRI_BOOTSTRAP-->", f'<meta name="shinri-token" content="{self.api_token}">'
+        )
+        body = content.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _validate_payload(self, data):
+        if not isinstance(data, dict):
+            raise ValueError("Тело запроса должно быть JSON-объектом")
+        for key in ("text", "image"):
+            if key in data and not isinstance(data[key], str):
+                raise ValueError(f"{key}: ожидается строка")
+        if len(data.get("text", "")) > 100000:
+            raise ValueError("Текст слишком длинный")
+        for key, low, high in (
+            ("top_n", 1, 128),
+            ("min_reviews", 0, 1000000),
+            ("m_confidence", 0, 1000),
+        ):
+            if key in data and (type(data[key]) is not int or not low <= data[key] <= high):
+                raise ValueError(f"{key}: целое число от {low} до {high}")
+        options = {
+            "ranking_mode": ("bayesian", "classic"),
+            "ambiguous_strategy": ("most_reviews", "manual"),
+            "sort_order": ("asc", "desc"),
+            "metric": ("bayesian_score", "avg_rating"),
+            "format": ("single_elimination", "round_robin"),
+            "layout": ("auto", "grid", "text"),
+        }
+        for key, values in options.items():
+            if key in data and data[key] not in values:
+                raise ValueError(f"Некорректный {key}")
+        for key in ("is_chat_log", "is_live", "include_export"):
+            if key in data and type(data[key]) is not bool:
+                raise ValueError(f"{key}: ожидается bool")
+        for key in (
+            "players",
+            "team_a",
+            "team_b",
+            "best_players",
+            "worst_players",
+            "unrated_players",
+        ):
+            if key not in data:
+                continue
+            if not isinstance(data[key], list) or len(data[key]) > 128:
+                raise ValueError("Максимум 128 игроков")
+            for player in data[key]:
+                if not isinstance(player, dict):
+                    raise ValueError("Игрок должен быть объектом")
+                for field in ("name", "input_text"):
+                    if field in player and (
+                        not isinstance(player[field], str) or len(player[field]) > 256
+                    ):
+                        raise ValueError("Некорректное имя игрока")
+                for field in ("avg_rating", "avg", "bayesian_score"):
+                    value = player.get(field)
+                    if value is not None and (
+                        type(value) not in (int, float) or not 0 <= value <= 5
+                    ):
+                        raise ValueError("Некорректный балл игрока")
+        if "ids" in data and (
+            not isinstance(data["ids"], list)
+            or len(data["ids"]) > 4
+            or any(type(pid) is not int or pid <= 0 for pid in data["ids"])
+        ):
+            raise ValueError("Передайте не более 4 положительных ID")
+
     def log_message(self, format: str, *args: Any) -> None:
-        logger.debug("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
+        logger.debug(
+            "%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args
+        )
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
     def _send_error(self, message: str, status: int = 400) -> None:
         self._send_json({"error": message}, status=status)
 
-    def do_OPTIONS(self) -> None:
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+    def do_OPTIONS(self):
+        # Same-origin JSON requests do not need CORS preflights.
+        self._send_error("Cross-origin API отключён", 403)
 
-    def do_GET(self) -> None:
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        if not self._check_access(require_token=path.startswith("/api/")):
+            return
+        try:
+            self._dispatch_get()
+        except (ValueError, TypeError, KeyError) as exc:
+            self._send_error(str(exc), 400)
+        except ShinriNetworkError:
+            self._send_error("Сервис данных временно недоступен", 503)
+        except Exception:
+            logger.exception("Ошибка GET")
+            self._send_error("Внутренняя ошибка сервера", 500)
+
+    def _dispatch_get(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
-        path = parsed_url.path
+        path = urllib.parse.unquote(parsed_url.path).replace("\\", "/")
         query = urllib.parse.parse_qs(parsed_url.query)
 
         if path == "/api/status":
@@ -82,9 +228,9 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/player-card":
             self.handle_api_player_card(query)
         elif path == "/" or path == "/index.html":
-            self.serve_file(os.path.join(self.static_dir, "index.html"), "text/html; charset=utf-8")
+            self._serve_index()
         elif path.startswith("/static/"):
-            rel_path = path[len("/static/"):]
+            rel_path = path[len("/static/") :]
             full_path = os.path.join(self.static_dir, rel_path)
             self.serve_file(full_path)
         else:
@@ -92,20 +238,50 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
             if os.path.isfile(candidate):
                 self.serve_file(candidate)
             else:
-                self.serve_file(os.path.join(self.static_dir, "index.html"), "text/html; charset=utf-8")
+                self._send_error("Файл не найден", 404)
 
-    def do_POST(self) -> None:
+    def do_POST(self):
+        if not self._check_access(require_token=True):
+            return
+        try:
+            self._dispatch_post()
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self._send_error(str(exc), 400)
+        except ShinriNetworkError:
+            self._send_error("Сервис данных временно недоступен", 503)
+        except OcrUnavailable as exc:
+            self._send_error(str(exc), 503)
+        except (TimeoutError, OSError):
+            self._send_error("Операция не завершена; попробуйте ещё раз", 503)
+        except Exception:
+            logger.exception("Ошибка POST")
+            self._send_error("Внутренняя ошибка сервера", 500)
+
+    def _dispatch_post(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
-        path = parsed_url.path
+        path = urllib.parse.unquote(parsed_url.path).replace("\\", "/")
 
+        if self.headers.get("Transfer-Encoding"):
+            raise ValueError("Transfer-Encoding не поддерживается")
+        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+            raise ValueError("Требуется Content-Type: application/json")
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length < 0:
+            raise ValueError("Некорректная длина запроса")
+        if content_length > 12 * 1024 * 1024:
+            self._send_error("Размер запроса превышает 12 МБ", 413)
+            return
         post_data = self.rfile.read(content_length)
+        if len(post_data) != content_length:
+            raise ValueError("Неполное тело запроса")
 
         try:
             req_json = json.loads(post_data.decode("utf-8")) if post_data else {}
         except Exception:
             self._send_error("Некорректный JSON в теле запроса", 400)
             return
+
+        self._validate_payload(req_json)
 
         if path == "/api/rank":
             self.handle_api_rank(req_json)
@@ -136,35 +312,41 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         try:
             if not self.client.is_loaded:
                 self.client.load_ratings()
-            self._send_json({
-                "status": "ok",
-                "loaded": self.client.is_loaded,
-                "total_players": self.client.total_rated_players,
-                "data_source": self.client.data_source,
-                "global_avg": self.client.global_avg_rating,
-                "offline_mode": self.client.offline_mode,
-            })
+            self._send_json(
+                {
+                    "status": "ok",
+                    "loaded": self.client.is_loaded,
+                    "total_players": self.client.total_rated_players,
+                    "data_source": self.client.data_source,
+                    "global_avg": self.client.global_avg_rating,
+                    "offline_mode": self.client.offline_mode,
+                }
+            )
         except Exception as e:
-            self._send_json({
-                "status": "error",
-                "error": str(e),
-                "loaded": False,
-                "total_players": 0,
-                "data_source": "error",
-                "global_avg": 4.80,
-                "offline_mode": self.client.offline_mode,
-            })
+            self._send_json(
+                {
+                    "status": "error",
+                    "error": str(e),
+                    "loaded": False,
+                    "total_players": 0,
+                    "data_source": "error",
+                    "global_avg": 4.80,
+                    "offline_mode": self.client.offline_mode,
+                }
+            )
 
     def handle_api_refresh(self) -> None:
         try:
             delta = self.client.refresh_delta()
-            self._send_json({
-                "status": "ok",
-                "total_players": self.client.total_rated_players,
-                "global_avg": self.client.global_avg_rating,
-                "data_source": self.client.data_source,
-                "delta": delta,
-            })
+            self._send_json(
+                {
+                    "status": "ok",
+                    "total_players": self.client.total_rated_players,
+                    "global_avg": self.client.global_avg_rating,
+                    "data_source": self.client.data_source,
+                    "delta": delta,
+                }
+            )
         except Exception as e:
             self._send_error(f"Не удалось обновить базу: {e}", 500)
 
@@ -178,20 +360,23 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
             parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
             ratings = parsed.get("ratings") if isinstance(parsed, dict) else parsed
             if not isinstance(ratings, list):
-                self._send_error("Формат базы должен быть списком игроков или объектом с 'ratings'", 400)
+                self._send_error(
+                    "Формат базы должен быть списком игроков или объектом с 'ratings'", 400
+                )
                 return
 
-            self.client._populate_indexes(ratings)
-            self.client._loaded_at = 0
-            self.client._data_source = "manual_import"
-            self.client._write_cache_file(ratings)
+            self.client.import_ratings(ratings)
 
-            self._send_json({
-                "status": "ok",
-                "imported_count": len(ratings),
-            })
-        except Exception as e:
-            self._send_error(f"Ошибка при импорте базы: {e}", 500)
+            self._send_json(
+                {
+                    "status": "ok",
+                    "imported_count": len(ratings),
+                }
+            )
+        except (ValueError, TypeError, KeyError) as e:
+            self._send_error(f"Ошибка при импорте базы: {e}", 400)
+        except OSError:
+            self._send_error("Не удалось сохранить базу на диск", 503)
 
     def handle_api_export_cache(self) -> None:
         try:
@@ -204,7 +389,7 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Disposition", "attachment; filename=\"shinri_database.json\"")
+            self.send_header("Content-Disposition", 'attachment; filename="shinri_database.json"')
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -289,10 +474,12 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
     def handle_api_parse_log(self, req_json: Dict[str, Any]) -> None:
         log_text = req_json.get("text", "")
         extracted = ChatLogExtractor.extract_from_log(log_text)
-        self._send_json({
-            "players": extracted,
-            "count": len(extracted),
-        })
+        self._send_json(
+            {
+                "players": extracted,
+                "count": len(extracted),
+            }
+        )
 
     def handle_api_compare(self, req_json: Dict[str, Any]) -> None:
         player_ids = req_json.get("ids", [])
@@ -311,21 +498,25 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
             if base:
                 details = self.client.fetch_player_detailed_reviews(pid)
                 nick_history = self.client.fetch_player_nick_history(pid)
-                bayes = Ranker.calculate_bayesian_score(base["avg"], base["count"], self.client.global_avg_rating)
-                results.append({
-                    "id": pid,
-                    "name": base["name"],
-                    "avg": base["avg"],
-                    "bayesian_score": round(bayes, 2),
-                    "count": base["count"],
-                    "avatar_url": base.get("avatar_url"),
-                    "profile_url": base["profile_url"],
-                    "verified_avg": details.get("verified_avg"),
-                    "verified_count": details.get("verified_count", 0),
-                    "top_review": details.get("top_review"),
-                    "tags": details.get("tags", []),
-                    "nick_history": nick_history.get("history", []),
-                })
+                bayes = Ranker.calculate_bayesian_score(
+                    base["avg"], base["count"], self.client.global_avg_rating
+                )
+                results.append(
+                    {
+                        "id": pid,
+                        "name": base["name"],
+                        "avg": base["avg"],
+                        "bayesian_score": round(bayes, 2),
+                        "count": base["count"],
+                        "avatar_url": base.get("avatar_url"),
+                        "profile_url": base["profile_url"],
+                        "verified_avg": details.get("verified_avg"),
+                        "verified_count": details.get("verified_count", 0),
+                        "top_review": details.get("top_review"),
+                        "tags": details.get("tags", []),
+                        "nick_history": nick_history.get("history", []),
+                    }
+                )
 
         self._send_json({"players": results})
 
@@ -349,8 +540,21 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         self._send_json(res)
 
     def handle_api_lobby_safety(self, req_json: Dict[str, Any]) -> None:
-        ranked = req_json.get("best_players", []) + req_json.get("worst_players", [])
-        unrated = req_json.get("unrated_players", [])
+        combined = req_json.get(
+            "players", req_json.get("best_players", []) + req_json.get("worst_players", [])
+        ) + req_json.get("unrated_players", [])
+        seen, ranked, unrated = set(), [], []
+        for player in combined:
+            key = player.get("player_id") or player.get("id") or player.get("name")
+            if key in seen:
+                continue
+            seen.add(key)
+            score = player.get("avg_rating", player.get("avg"))
+            count = player.get("reviews_count", player.get("count", 0))
+            if score is not None and count and not player.get("rating_imputed"):
+                ranked.append(player)
+            else:
+                unrated.append(player)
         res = LobbySafetyMeter.analyze_lobby(ranked, unrated)
         self._send_json(res)
 
@@ -359,30 +563,52 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         raw_text = req_json.get("text", "")
 
         if raw_image:
-            recognized_text, candidates = OcrProcessor.process_image(raw_image, self.client, auto_fuzzy_correct=True)
+            if not raw_image.startswith("data:image/"):
+                raise ValueError("HTTP OCR принимает только data:image, не локальные пути")
+            if not self.ocr_slot.acquire(blocking=False):
+                self._send_error("OCR занят. Повторите после завершения текущего сканирования", 429)
+                return
+            try:
+                recognized_text, candidates = OcrProcessor.process_image(
+                    raw_image,
+                    self.client,
+                    auto_fuzzy_correct=True,
+                    layout=req_json.get("layout", "auto"),
+                )
+            finally:
+                self.ocr_slot.release()
             clean_text = "\n".join(c["matched_name"] for c in candidates)
-            self._send_json({
-                "recognized_text": clean_text,
-                "clean_text": clean_text,
-                "raw_ocr": recognized_text,
-                "candidates": candidates,
-                "engine": "windows_native" if candidates else "fallback",
-            })
+            self._send_json(
+                {
+                    "recognized_text": clean_text,
+                    "clean_text": clean_text,
+                    "raw_ocr": recognized_text,
+                    "candidates": candidates,
+                    "engine": OcrProcessor.engine_name(),
+                    "needs_review": any(c.get("needs_review") for c in candidates),
+                }
+            )
             return
 
         if not raw_text.strip():
-            self._send_error("Передайте изображение (image) или текст (text) для распознавания", 400)
+            self._send_error(
+                "Передайте изображение (image) или текст (text) для распознавания", 400
+            )
             return
 
-        candidates = OcrProcessor.process_screenshot_text(raw_text, self.client, auto_fuzzy_correct=True)
+        candidates = OcrProcessor.process_screenshot_text(
+            raw_text, self.client, auto_fuzzy_correct=True
+        )
         clean_text = "\n".join(c["matched_name"] for c in candidates)
-        self._send_json({
-            "recognized_text": clean_text,
-            "clean_text": clean_text,
-            "raw_ocr": raw_text,
-            "candidates": candidates,
-            "engine": "text_parsing",
-        })
+        self._send_json(
+            {
+                "recognized_text": clean_text,
+                "clean_text": clean_text,
+                "raw_ocr": raw_text,
+                "candidates": candidates,
+                "engine": "text_parsing",
+            }
+        )
 
     def handle_api_rank(self, req_json: Dict[str, Any]) -> None:
         raw_input = req_json.get("text", "")
@@ -397,7 +623,10 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         include_export = bool(req_json.get("include_export", False))
 
         if not raw_input or not raw_input.strip():
-            self._send_error("Список участников пуст. Пожалуйста, введите никнеймы игроков для матча (16 участников).", 400)
+            self._send_error(
+                "Список участников пуст. Пожалуйста, введите никнеймы игроков для матча (16 участников).",
+                400,
+            )
             return
 
         try:
@@ -413,7 +642,14 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         # Parse inputs
         items = InputParser.parse_text(raw_input, is_chat_log=is_chat_log)
         if not items:
-            self._send_error("Не удалось распознать ни одного игрока во входном тексте. Введите имена или ссылки по одной на строку.", 400)
+            self._send_error(
+                "Не удалось распознать ни одного игрока во входном тексте. Введите имена или ссылки по одной на строку.",
+                400,
+            )
+            return
+
+        if len(items) > 128:
+            self._send_error("Максимум 128 строк участников за запрос", 400)
             return
 
         # Match profiles (skip slow online network requests if typing in live eval mode)
@@ -449,15 +685,19 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         else:
             resp_data["markdown"] = ""
             resp_data["csv"] = ""
-        resp_data["participant_count"] = len(report.match_players or [])
-        resp_data["is_16_match"] = len(report.match_players or []) == 16
+        roster_count = len(report.analytics_roster())
+        resp_data["participant_count"] = roster_count
+        resp_data["is_16_match"] = (
+            roster_count == 16
+            and not report.ambiguous_players
+            and not report.missing_players
+            and not report.duplicates
+        )
         resp_data["sort_order"] = sort_order
 
-        if len(report.match_players or []) != 16:
-            count = len(report.match_players or [])
-            resp_data["validation_warning"] = (
-                f"Введено {count} из 16 участников матча."
-            )
+        if not resp_data["is_16_match"]:
+            count = roster_count
+            resp_data["validation_warning"] = f"Введено {count} из 16 участников матча."
 
         self._send_json(resp_data)
 
@@ -480,11 +720,20 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
                     else:
                         mime, _ = mimetypes.guess_type(full_path)
                         resolved_content_type = (
-                            f"{mime}; charset=utf-8" if mime and "text" in mime else (mime or "application/octet-stream")
+                            f"{mime}; charset=utf-8"
+                            if mime and "text" in mime
+                            else (mime or "application/octet-stream")
                         )
                     etag = f'"{hashlib.md5(content).hexdigest()}"'
-                    is_compressible = any(t in (resolved_content_type or "") for t in ["text", "javascript", "json", "html", "css"])
-                    gzip_content = gzip.compress(content, compresslevel=6) if is_compressible and len(content) > 256 else None
+                    is_compressible = any(
+                        t in (resolved_content_type or "")
+                        for t in ["text", "javascript", "json", "html", "css"]
+                    )
+                    gzip_content = (
+                        gzip.compress(content, compresslevel=6)
+                        if is_compressible and len(content) > 256
+                        else None
+                    )
                     cls._STATIC_CACHE[full_path] = {
                         "mtime": mtime,
                         "content": content,
@@ -496,6 +745,12 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
                     pass
 
     def serve_file(self, full_path: str, content_type: Optional[str] = None) -> None:
+        root = Path(self.static_dir).resolve()
+        resolved = Path(full_path).resolve()
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            self._send_error("Файл не найден", 404)
+            return
+        full_path = str(resolved)
         # Fast RAM hit: if already cached and frozen, skip all disk checks
         is_frozen = getattr(sys, "frozen", False)
         cache_entry = self._STATIC_CACHE.get(full_path)
@@ -520,15 +775,24 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
                         else:
                             mime, _ = mimetypes.guess_type(full_path)
                             resolved_content_type = (
-                                f"{mime}; charset=utf-8" if mime and "text" in mime else (mime or "application/octet-stream")
+                                f"{mime}; charset=utf-8"
+                                if mime and "text" in mime
+                                else (mime or "application/octet-stream")
                             )
 
                     with open(full_path, "rb") as f:
                         content = f.read()
 
                     etag = f'"{hashlib.md5(content).hexdigest()}"'
-                    is_compressible = any(t in (resolved_content_type or "") for t in ["text", "javascript", "json", "html", "css"])
-                    gzip_content = gzip.compress(content, compresslevel=6) if is_compressible and len(content) > 256 else None
+                    is_compressible = any(
+                        t in (resolved_content_type or "")
+                        for t in ["text", "javascript", "json", "html", "css"]
+                    )
+                    gzip_content = (
+                        gzip.compress(content, compresslevel=6)
+                        if is_compressible and len(content) > 256
+                        else None
+                    )
 
                     cache_entry = {
                         "mtime": mtime,
@@ -546,7 +810,7 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
 
         # Static assets can be cached aggressively in client WebView2
         is_html = full_path.endswith(".html") or full_path.endswith(".htm")
-        cache_header = "no-cache" if is_html else "public, max-age=31536000, immutable"
+        cache_header = "no-cache"  # Stable filenames must revalidate after an upgrade.
 
         # ETag 304 validation
         if_none_match = self.headers.get("If-None-Match")
@@ -567,6 +831,7 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("ETag", cache_entry["etag"])
         self.send_header("Cache-Control", cache_header)
+        self.send_header("Vary", "Accept-Encoding")
         if can_gzip:
             self.send_header("Content-Encoding", "gzip")
         self.end_headers()
@@ -579,6 +844,12 @@ def create_server(
     client: Optional[ShinriClient] = None,
     static_dir: Optional[str] = None,
 ) -> ThreadingHTTPServer:
+    if host not in ("127.0.0.1", "localhost"):
+        raise ValueError(
+            "Сервер предназначен только для локального использования; используйте 127.0.0.1"
+        )
+    if not 0 <= port <= 65535:
+        raise ValueError("Некорректный порт")
     if client is None:
         client = ShinriClient()
 
@@ -586,13 +857,17 @@ def create_server(
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             cand1 = os.path.join(sys._MEIPASS, "shinri_ranker", "static")
             cand2 = os.path.join(sys._MEIPASS, "static")
-            static_dir = cand1 if os.path.isdir(cand1) else (cand2 if os.path.isdir(cand2) else None)
+            static_dir = (
+                cand1 if os.path.isdir(cand1) else (cand2 if os.path.isdir(cand2) else None)
+            )
         if not static_dir or not os.path.isdir(static_dir):
             static_dir = os.path.join(os.path.dirname(__file__), "static")
 
     class BoundHandler(ShinriRequestHandler):
         pass
 
+    BoundHandler.api_token = os.environ.get("SHINRI_API_TOKEN") or secrets.token_urlsafe(32)
+    BoundHandler._STATIC_CACHE = {}
     BoundHandler.client = client
     BoundHandler.static_dir = static_dir
 

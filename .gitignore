@@ -38,3 +38,8 @@ env/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Frontend development dependencies
+node_modules/
+# Local browser QA outputs
+qa/
