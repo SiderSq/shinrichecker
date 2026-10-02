@@ -26,8 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
-    themeButton.textContent =
-      theme === "dark" ? "☀ Светлая тема" : "◐ Тёмная тема";
+    themeButton.textContent = theme === "dark" ? "Светлая тема" : "Тёмная тема";
     themeButton.setAttribute("aria-pressed", String(theme === "dark"));
   }
   try {
@@ -234,7 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (count === 16) {
       matchCounter.className = "match-counter-pill counter-ready";
-      matchCounterText.textContent = "✓ 16 / 16 участников (Готово к проверке)";
+      matchCounterText.textContent = "16 / 16 участников (Готово к проверке)";
     } else if (count > 0 && count < 16) {
       matchCounter.className = "match-counter-pill counter-warning";
       matchCounterText.textContent = `${count} / 16 участников (еще ${16 - count})`;
@@ -299,7 +298,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const reviewCount = ocrCandidates.filter(
       (c) => c.needs_review && !c.confirmed,
     ).length;
-    let note = `✓ Распознано игроков: ${total}`;
+    let note = `Распознано игроков: ${total}`;
     if (correctedCount > 0) {
       note += ` (${exactCount} точно, ${correctedCount} исправлений предложено)`;
     }
@@ -317,22 +316,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (candidate.needs_review && !candidate.confirmed)
         chip.classList.add("chip-review");
-      let statusIcon = "✓";
+      let statusLabel = "Точное совпадение";
       let statusTitle = "Точное совпадение в базе";
       if (candidate.similarity >= 0.99) {
         chip.classList.add("chip-exact");
       } else if (candidate.corrected) {
         chip.classList.add("chip-corrected");
-        statusIcon = "⚡";
-        statusTitle = `Автоисправлено: ${candidate.raw_ocr} → ${candidate.matched_name} (${Math.round(candidate.similarity * 100)}%)`;
+        statusLabel = "Исправление OCR";
+        statusTitle = `Предложено исправление: ${candidate.raw_ocr} → ${candidate.matched_name} (${Math.round(candidate.similarity * 100)}%)`;
       } else {
-        statusIcon = "?";
+        statusLabel = "Нет профиля";
         statusTitle = "Новичок / нет в базе";
       }
 
+      if (candidate.needs_review && !candidate.confirmed)
+        statusLabel = "Требует проверки";
+      else if (candidate.confirmed) statusLabel = "Подтверждено";
+
       const iconSpan = document.createElement("span");
-      iconSpan.className = "chip-status-icon";
-      iconSpan.textContent = statusIcon;
+      iconSpan.className = "chip-status-label";
+      iconSpan.textContent = statusLabel;
       iconSpan.title = statusTitle;
 
       const nameSpan = document.createElement("span");
@@ -525,7 +528,7 @@ document.addEventListener("DOMContentLoaded", () => {
             switchToTab("tab-text");
             await calculateRatings(false);
             showToast(
-              `⚡ Сквозная оценка: ${ocrRecognizedPlayers.length} игроков распознано и рассчитано!`,
+              `Сквозная оценка: ${ocrRecognizedPlayers.length} игроков распознано и рассчитано!`,
               "success",
             );
           } else {
@@ -655,7 +658,7 @@ document.addEventListener("DOMContentLoaded", () => {
           document.body.removeChild(ta);
         }
         showToast(
-          `📋 Скопировано ${ocrRecognizedPlayers.length} игроков в буфер`,
+          `Скопировано ${ocrRecognizedPlayers.length} игроков в буфер`,
           "success",
         );
       } catch (err) {
@@ -880,7 +883,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("results-empty").classList.add("hidden");
     if (!isLive) {
       btnCalculate.disabled = true;
-      btnCalculate.innerHTML = "⏳ Обработка и расчет оценок...";
+      btnCalculate.innerHTML = "Обработка и расчет оценок...";
     }
 
     try {
@@ -946,7 +949,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (requestId === rankRequestId && !isLive) {
         btnCalculate.disabled = false;
         btnCalculate.innerHTML =
-          '<span class="btn-icon">⚡</span> Рассчитать рейтинг матча <span class="btn-kbd-badge"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>';
+          'Рассчитать рейтинг матча <span class="btn-kbd-badge"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>';
       }
     }
   }
@@ -969,7 +972,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ["ambiguous", "duplicate"].includes(p.status),
     ).length;
     if (reportData.is_16_match && unratedCount === 0 && unresolvedCount === 0) {
-      bannerHtml = `<div class="banner-success">✓ Идеальный матч: все 16 участников найдены в базе и имеют оценки.</div>`;
+      bannerHtml = `<div class="banner-success">Идеальный матч: все 16 участников найдены в базе и имеют оценки.</div>`;
     } else {
       const notes = [];
       if (totalCount !== 16) {
@@ -983,7 +986,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (unratedCount > 0) {
         notes.push(`Без истории оценок: <strong>${unratedCount}</strong>.`);
       }
-      bannerHtml = `<div class="banner-warning">ℹ️ ${notes.join(" • ")} Все участники отображены в едином списке.</div>`;
+      bannerHtml = `<div class="banner-warning">Требует внимания: ${notes.join(" • ")} Все участники отображены в едином списке.</div>`;
     }
 
     validationBanner.className = `validation-banner ${reportData.is_16_match && unratedCount === 0 && unresolvedCount === 0 ? "state-success" : "state-warning"}`;
@@ -1001,7 +1004,7 @@ document.addEventListener("DOMContentLoaded", () => {
             rated.length
           ).toFixed(2)
         : "-";
-    resultsMeta.textContent = `Участников: ${totalCount} • Средний балл лобби: ★ ${avgScore}`;
+    resultsMeta.textContent = `Участников: ${totalCount} • Средний балл лобби: ${avgScore}`;
 
     // Apply sorting & render
     sortAndRenderList();
@@ -1177,7 +1180,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let scoreBadgeClass = "score-none";
         let scoreText = "-";
         if (displayScore !== null && displayScore !== undefined) {
-          scoreText = `★ ${Number(displayScore).toFixed(2)}`;
+          scoreText = `Балл ${Number(displayScore).toFixed(2)}`;
           if (displayScore >= 4.5) scoreBadgeClass = "score-high";
           else if (displayScore >= 3.5) scoreBadgeClass = "score-medium";
           else if (displayScore >= 2.5) scoreBadgeClass = "score-low";
@@ -1186,15 +1189,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
         let statusBadge = "";
         if (p.status === "unrated") {
-          statusBadge = `<span class="player-status-badge badge-unrated">⏳ Нет оценок</span>`;
+          statusBadge = `<span class="player-status-badge badge-unrated">Нет оценок</span>`;
         } else if (p.status === "missing") {
-          statusBadge = `<span class="player-status-badge badge-missing">❌ Не найден</span>`;
+          statusBadge = `<span class="player-status-badge badge-missing">Не найден</span>`;
         } else if (p.status === "ambiguous") {
-          statusBadge = `<span class="player-status-badge badge-ambiguous">? Нужна проверка</span>`;
+          statusBadge = `<span class="player-status-badge badge-ambiguous">Нужна проверка</span>`;
         } else if (p.status === "duplicate") {
-          statusBadge = `<span class="player-status-badge badge-duplicate">📋 Повтор</span>`;
+          statusBadge = `<span class="player-status-badge badge-duplicate">Повтор</span>`;
         } else {
-          statusBadge = `<span class="player-status-badge badge-matched">✓ В рейтинге</span>`;
+          statusBadge = `<span class="player-status-badge badge-matched">В рейтинге</span>`;
         }
 
         const rawAvg =
@@ -1230,7 +1233,7 @@ document.addEventListener("DOMContentLoaded", () => {
               ${profileLink}
               ${idTag}
               ${statusBadge}
-              <button class="btn-swap-player" data-player-name="${escapeHtml(p.name)}" title="Заменить этого игрока другим">⇄ Заменить</button>
+              <button class="btn-swap-player" data-player-name="${escapeHtml(p.name)}" title="Заменить этого игрока другим">Заменить</button>
             </div>
             ${noteTag}
           </div>
@@ -1253,13 +1256,13 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const lines = [
-      `★ Состав матча DRO (16 игроков) - Shinri Reviews:`,
+      `Состав матча DRO (16 игроков) - Shinri Reviews:`,
       `Порядок: ${currentSortOrder === "desc" ? "От лучших к худшим" : "От худших к лучшим"}\n`,
     ];
 
     currentMatchPlayers.forEach((p) => {
       const score =
-        p.bayesian_score !== null ? `★ ${p.bayesian_score.toFixed(2)}` : "-";
+        p.bayesian_score !== null ? `${p.bayesian_score.toFixed(2)}` : "-";
       const raw = p.avg_rating !== null ? `${p.avg_rating.toFixed(2)}` : "-";
       lines.push(
         `#${p.rank} ${p.name} — Рейтинг: ${score} (ср: ${raw}, отзывов: ${p.reviews_count || 0})`,
@@ -1315,7 +1318,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="review-item">
           <div class="review-header">
             <span class="review-author">${escapeHtml(r.author || "Аноним")} ${r.verified ? "· подтверждён" : ""}</span>
-            <span class="review-stars">★ ${r.rating || 5}</span>
+            <span class="review-stars">Оценка: ${r.rating || 5}</span>
           </div>
           <div class="review-text">${escapeHtml(r.text || "")}</div>
         </div>
@@ -1448,7 +1451,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .map(
           (h, idx) => `
         <button class="history-pill" data-history-idx="${idx}" title="${escapeHtml(h.time)} (${Number(h.count) || 0} игроков)">
-          🕒 ${escapeHtml(h.time)} (${Number(h.count) || 0} игр.)
+          ${escapeHtml(h.time)} (${Number(h.count) || 0} игр.)
         </button>
       `,
         )

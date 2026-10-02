@@ -7,7 +7,43 @@ const fs = require("node:fs");
 const project = path.join(__dirname, "..");
 const output = process.env.SHINRI_QA_DIR;
 const failures = [];
+// Digits, # IDs, punctuation and user-supplied nicknames must remain intact.
+const authoredSymbols =
+  /[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F★✓⇄◎◐●]/u;
+for (const relative of [
+  "main.py",
+  "shinri_ranker/cli.py",
+  "shinri_ranker/analytics.py",
+  "shinri_ranker/matcher.py",
+  "shinri_ranker/exporter.py",
+  "shinri_ranker/static/index.html",
+  "shinri_ranker/static/app.js",
+]) {
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(project, relative), "utf8"),
+    authoredSymbols,
+    relative,
+  );
+}
+async function assertUiText(page) {
+  const text = await page.evaluate(() =>
+    [
+      document.body.innerText,
+      ...Array.from(
+        document.querySelectorAll("[title], [placeholder], [aria-label]"),
+        (e) =>
+          [
+            e.title,
+            e.getAttribute("placeholder"),
+            e.getAttribute("aria-label"),
+          ].join(" "),
+      ),
+    ].join("\n"),
+  );
+  assert.doesNotMatch(text, authoredSymbols, "Authored interface symbols");
+}
 async function snapshot(page, name) {
+  await assertUiText(page);
   if (!output) return;
   fs.mkdirSync(output, { recursive: true });
   const avatar =
@@ -84,6 +120,16 @@ async function snapshot(page, name) {
     const page = await browser.newPage({
       viewport: { width: 1280, height: 960 },
     });
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: {
+          writeText: async (text) => {
+            window.__copiedText = text;
+          },
+        },
+        configurable: true,
+      });
+    });
     page.on("pageerror", (error) => failures.push(error.message));
     await page.route("https://shinrireviews.com/**", (route) => route.abort());
     await page.goto(url);
@@ -99,6 +145,17 @@ async function snapshot(page, name) {
       /Идеальный матч/,
     );
     assert.equal(await page.locator("#metric-found").innerText(), "16");
+    await page.locator("#btn-copy-roster").click();
+    await page.waitForFunction(() => window.__copiedText?.includes("Hunk"));
+    assert.doesNotMatch(
+      await page.evaluate(() => window.__copiedText),
+      authoredSymbols,
+    );
+    assert.match(
+      await page.locator(".score-badge").first().innerText(),
+      /Балл 4\.65/,
+    );
+    await assertUiText(page);
     // Theme, sort, filter and modal keyboard controls.
     await page.locator("#btn-theme").click();
     await page.locator("#btn-sort-asc").click();
@@ -115,6 +172,46 @@ async function snapshot(page, name) {
     );
     await snapshot(page, "modal-desktop");
     await page.keyboard.press("Escape");
+    // Actual review layout uses a textual rating, not a star.
+    await page.route("**/api/player-details?*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          details: {
+            available: true,
+            reviews: [
+              {
+                author: "Reviewer",
+                rating: 4,
+                text: "Тестовый отзыв",
+                verified: true,
+              },
+            ],
+          },
+        }),
+      }),
+    );
+    await page.locator(".player-row").click();
+    await page.waitForSelector(".review-stars");
+    assert.equal(await page.locator(".review-stars").innerText(), "Оценка: 4");
+    await assertUiText(page);
+    await page.keyboard.press("Escape");
+    await page.unroute("**/api/player-details?*");
+    await page.locator(".btn-swap-player").click();
+    await page.waitForSelector("#swap-modal:not(.hidden)");
+    assert.match(
+      await page.locator("#swap-title").innerText(),
+      /Быстрая замена/,
+    );
+    await assertUiText(page);
+    await page.locator("#btn-cancel-swap").click();
+    assert.ok(
+      await page
+        .locator("#swap-modal")
+        .evaluate((e) => e.classList.contains("hidden")),
+    );
+
     await page.locator("#btn-clear-filter").click();
     await page.waitForFunction(
       () => document.querySelectorAll(".player-row").length === 16,
@@ -205,6 +302,10 @@ async function snapshot(page, name) {
       buffer: png,
     });
     await page.waitForSelector(".chip-review");
+    assert.equal(
+      await page.locator(".chip-status-label").innerText(),
+      "Требует проверки",
+    );
     await snapshot(page, "ocr-review-desktop");
     await page.setViewportSize({ width: 390, height: 960 });
     assert.ok(
@@ -219,6 +320,10 @@ async function snapshot(page, name) {
       .locator(".chip-review button", { hasText: "Подтвердить" })
       .click();
     assert.equal(await page.locator("#players-input").inputValue(), "#1");
+    assert.equal(
+      await page.locator(".chip-status-label").innerText(),
+      "Подтверждено",
+    );
     await page.locator("#btn-ocr-calc-now").click();
     await page.waitForFunction(
       () => document.querySelector(".player-name")?.textContent === "Hunk",
@@ -251,6 +356,14 @@ async function snapshot(page, name) {
     );
     await snapshot(page, "ocr-error-desktop");
     await page.unroute("**/api/ocr-process");
+    // Removing authored emoji must not remove emoji supplied by the user.
+    await page.locator('[data-tab="tab-text"]').click();
+    const suppliedName = "Player" + String.fromCodePoint(0x1f600) + "^-^";
+    await page.locator("#players-input").fill(suppliedName);
+    assert.equal(
+      await page.locator("#players-input").inputValue(),
+      suppliedName,
+    );
     await page.close();
     // Snapshot the actual rendered states for visual inspection.
     for (const width of [1280, 390]) {
@@ -267,7 +380,7 @@ async function snapshot(page, name) {
         await preview.evaluate((theme) => {
           document.documentElement.dataset.theme = theme;
           document.querySelector("#btn-theme").textContent =
-            theme === "dark" ? "☀ Светлая тема" : "◐ Тёмная тема";
+            theme === "dark" ? "Светлая тема" : "Тёмная тема";
         }, theme);
         await preview.evaluate(() =>
           document.querySelectorAll(".toast").forEach((e) => e.remove()),
@@ -300,7 +413,7 @@ async function snapshot(page, name) {
     }
     assert.deepEqual(failures, [], "Browser runtime errors");
     console.log(
-      "UI checks passed: live IDs, duplicate validation, theme/sort/search/modal, stale responses, OCR confirmation, OCR errors, desktop/mobile overflow.",
+      "UI checks passed: live IDs, duplicate validation, theme/sort/search/modal, stale responses, OCR confirmation, OCR errors, desktop/mobile overflow, emoji-free authored labels and unchanged user text.",
     );
   } finally {
     if (browser) await browser.close();

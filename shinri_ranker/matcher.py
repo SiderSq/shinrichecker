@@ -610,7 +610,7 @@ class ProfileMatcher:
             if resolve_ambiguous_strategy == "most_reviews":
                 chosen = sorted_candidates[0]
                 other_candidates = [
-                    f"ID: {c['id']} ({c['name']}, {c['count']} отз., ★ {c['avg']})"
+                    f"ID: {c['id']} ({c['name']}, {c['count']} отз., балл {c['avg']})"
                     for c in sorted_candidates[1:]
                 ]
                 note = (

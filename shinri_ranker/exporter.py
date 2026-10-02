@@ -129,7 +129,7 @@ class Exporter:
             writer.writerow(["Строка", "Исходный ввод", "Количество кандидатов", "Кандидаты"])
             for p in report.ambiguous_players:
                 cands_str = " | ".join(
-                    f"ID {c.get('id')} ({c.get('name')}, {c.get('count')} отз., ★ {c.get('avg')})"
+                    f"ID {c.get('id')} ({c.get('name')}, {c.get('count')} отз., балл {c.get('avg')})"
                     for c in p.candidates
                 )
                 writer.writerow(
@@ -189,7 +189,7 @@ class Exporter:
             f"- **Всего строк во вводе:** {report.total_inputs} | **Уникальных игроков:** {report.unique_inputs}",
             f"- **Количество мест:** {report.top_n} (мин. отзывов: {report.min_reviews})",
             "",
-            "## 🏆 Топ лучших игроков",
+            "## Топ лучших игроков",
             "",
             "| № | Имя игрока | Средний балл | Взвешенный балл | Отзывы | Ссылка на профиль |",
             "|---|---|---|---|---|---|",
@@ -200,13 +200,13 @@ class Exporter:
         else:
             for p in report.best_players:
                 lines.append(
-                    f"| **{p.rank}** | {p.name} | **★ {p.avg_rating:.2f}** | ★ {p.bayesian_score:.2f} | {p.reviews_count} | [{p.profile_url}]({p.profile_url}) |"
+                    f"| **{p.rank}** | {p.name} | **{p.avg_rating:.2f}** | {p.bayesian_score:.2f} | {p.reviews_count} | [{p.profile_url}]({p.profile_url}) |"
                 )
 
         lines.extend(
             [
                 "",
-                "## ⚠️ Антитоп (худшие игроки)",
+                "## Антитоп (худшие игроки)",
                 "",
                 "| № | Имя игрока | Средний балл | Взвешенный балл | Отзывы | Ссылка на профиль |",
                 "|---|---|---|---|---|---|",
@@ -218,14 +218,14 @@ class Exporter:
         else:
             for p in report.worst_players:
                 lines.append(
-                    f"| **{p.rank}** | {p.name} | **★ {p.avg_rating:.2f}** | ★ {p.bayesian_score:.2f} | {p.reviews_count} | [{p.profile_url}]({p.profile_url}) |"
+                    f"| **{p.rank}** | {p.name} | **{p.avg_rating:.2f}** | {p.bayesian_score:.2f} | {p.reviews_count} | [{p.profile_url}]({p.profile_url}) |"
                 )
 
         if report.unrated_players:
             lines.extend(
                 [
                     "",
-                    "## ⏳ Игроки без рейтинга (0 отзывов)",
+                    "## Игроки без рейтинга (0 отзывов)",
                     "",
                     "| Строка | Имя / Ввод | Ссылка | Статус |",
                     "|---|---|---|---|",
@@ -241,7 +241,7 @@ class Exporter:
             lines.extend(
                 [
                     "",
-                    "## ❓ Неоднозначные совпадения (омонимы)",
+                    "## Неоднозначные совпадения (омонимы)",
                     "",
                     "| Строка | Ввод | Варианты кандидатов |",
                     "|---|---|---|",
@@ -258,7 +258,7 @@ class Exporter:
             lines.extend(
                 [
                     "",
-                    "## ❌ Не найдены на сайте",
+                    "## Не найдены на сайте",
                     "",
                     "| Строка | Ввод | Ошибка |",
                     "|---|---|---|",
@@ -271,7 +271,7 @@ class Exporter:
             lines.extend(
                 [
                     "",
-                    "## 📋 Обнаруженные дубликаты",
+                    "## Обнаруженные дубликаты",
                     "",
                     "| Строка | Ввод | Пояснение |",
                     "|---|---|---|",
