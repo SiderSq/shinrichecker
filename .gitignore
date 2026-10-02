@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller & Build artifacts
+build/
+dist/
+/ShinriRanker.exe
+*.manifest
+*.spec.bak
+!release/
+!release/ShinriRanker.exe
+
+# Local binary cache and runtime databases
+*.dat
+*.sqlite3
+*.db
+
+# Temporary & debug files
+*.log
+*.tmp
+*.bak
+debug_*.png
+strip_*.png
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
