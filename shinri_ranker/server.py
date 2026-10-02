@@ -6,6 +6,7 @@ detailed review inspection, and head-to-head comparison.
 
 from __future__ import annotations
 import gzip
+import copy
 import hashlib
 import json
 import logging
@@ -23,6 +24,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, Optional
 
+from .cache import TTLCache
 from .client import ShinriClient, ShinriNetworkError
 from .exporter import Exporter
 from .matcher import InputParser, ProfileMatcher, ChatLogExtractor
@@ -48,6 +50,15 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     def __init__(self, *args, **kwargs):
         self._slots = threading.BoundedSemaphore(16)
         super().__init__(*args, **kwargs)
+
+    def server_close(self):
+        super().server_close()
+        client = getattr(self.RequestHandlerClass, "client", None)
+        if client is not None:
+            client.close()
+        cache = getattr(self.RequestHandlerClass, "ocr_cache", None)
+        if cache is not None:
+            cache.clear()
 
     def process_request(self, request, address):
         if not self._slots.acquire(blocking=False):
@@ -133,6 +144,7 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         ):
             if key in data and (type(data[key]) is not int or not low <= data[key] <= high):
                 raise ValueError(f"{key}: целое число от {low} до {high}")
+        OcrProcessor.validate_roi(data.get("roi"))
         options = {
             "ranking_mode": ("bayesian", "classic"),
             "ambiguous_strategy": ("most_reviews", "manual"),
@@ -565,21 +577,36 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
         if raw_image:
             if not raw_image.startswith("data:image/"):
                 raise ValueError("HTTP OCR принимает только data:image, не локальные пути")
+            generation = self.client.generation
+            roi = req_json.get("roi")
+            key = (
+                hashlib.sha256(raw_image.encode("utf-8")).hexdigest(),
+                req_json.get("layout", "auto"),
+                json.dumps(roi, sort_keys=True),
+                generation,
+            )
+            cached = self.ocr_cache.get(key)
+            if cached is not None:
+                self._send_json({**copy.deepcopy(cached), "cache_hit": True})
+                return
             if not self.ocr_slot.acquire(blocking=False):
                 self._send_error("OCR занят. Повторите после завершения текущего сканирования", 429)
                 return
             try:
+                # A preceding request can finish between cache lookup and slot acquisition.
+                cached = self.ocr_cache.get(key)
+                if cached is not None:
+                    self._send_json({**copy.deepcopy(cached), "cache_hit": True})
+                    return
                 recognized_text, candidates = OcrProcessor.process_image(
                     raw_image,
                     self.client,
                     auto_fuzzy_correct=True,
                     layout=req_json.get("layout", "auto"),
+                    roi=roi,
                 )
-            finally:
-                self.ocr_slot.release()
-            clean_text = "\n".join(c["matched_name"] for c in candidates)
-            self._send_json(
-                {
+                clean_text = "\n".join(c["matched_name"] for c in candidates)
+                result = {
                     "recognized_text": clean_text,
                     "clean_text": clean_text,
                     "raw_ocr": recognized_text,
@@ -587,7 +614,12 @@ class ShinriRequestHandler(BaseHTTPRequestHandler):
                     "engine": OcrProcessor.engine_name(),
                     "needs_review": any(c.get("needs_review") for c in candidates),
                 }
-            )
+                # Never retain failures or matches from a concurrently replaced catalogue.
+                if generation == self.client.generation:
+                    self.ocr_cache[key] = copy.deepcopy(result)
+                self._send_json({**result, "cache_hit": False})
+            finally:
+                self.ocr_slot.release()
             return
 
         if not raw_text.strip():
@@ -868,6 +900,8 @@ def create_server(
 
     BoundHandler.api_token = os.environ.get("SHINRI_API_TOKEN") or secrets.token_urlsafe(32)
     BoundHandler._STATIC_CACHE = {}
+    BoundHandler.ocr_cache = TTLCache(ttl=300, maxsize=8)
+    BoundHandler.ocr_slot = threading.BoundedSemaphore(1)
     BoundHandler.client = client
     BoundHandler.static_dir = static_dir
 

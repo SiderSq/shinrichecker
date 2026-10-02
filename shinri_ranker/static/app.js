@@ -441,7 +441,95 @@ document.addEventListener("DOMContentLoaded", () => {
     showToast(`Игрок "${name}" добавлен`, "success");
   }
 
-  function handleOcrFile(file, autoRank = true) {
+  // Image region selection is optional and never changes the original file.
+  let ocrSourceFile = null;
+  const useRegion = document.getElementById("ocr-use-region");
+  const regionSelection = document.getElementById("ocr-region-selection");
+  const regionFields = ["x", "y", "width", "height"].map((name) =>
+    document.getElementById(`roi-${name}`),
+  );
+  function selectedRegion() {
+    if (!useRegion.checked) return null;
+    const [x, y, width, height] = regionFields.map(
+      (field) => Number(field.value) / 100,
+    );
+    if (
+      regionFields.some((field) => !field.value || !field.checkValidity()) ||
+      ![x, y, width, height].every(Number.isFinite) ||
+      width <= 0 ||
+      height <= 0 ||
+      x + width > 1.000001 ||
+      y + height > 1.000001
+    ) {
+      throw new Error(
+        "Область должна находиться внутри изображения; ширина и высота больше нуля.",
+      );
+    }
+    return { x, y, width, height };
+  }
+  function drawRegion() {
+    try {
+      const roi = selectedRegion();
+      regionSelection.classList.toggle("hidden", !roi);
+      if (roi) {
+        Object.assign(regionSelection.style, {
+          left: `${roi.x * 100}%`,
+          top: `${roi.y * 100}%`,
+          width: `${roi.width * 100}%`,
+          height: `${roi.height * 100}%`,
+        });
+      }
+    } catch {
+      regionSelection.classList.add("hidden");
+    }
+    document
+      .getElementById("ocr-image-stage")
+      .classList.toggle("selecting-region", useRegion.checked);
+  }
+  useRegion.addEventListener("change", drawRegion);
+  regionFields.forEach((field) => field.addEventListener("input", drawRegion));
+  const stage = document.getElementById("ocr-image-stage");
+  let dragStart = null;
+  function imagePoint(event) {
+    const rect = ocrPreviewImg.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  }
+  stage.addEventListener("pointerdown", (event) => {
+    if (!useRegion.checked || event.button !== 0) return;
+    event.preventDefault();
+    dragStart = imagePoint(event);
+    stage.setPointerCapture(event.pointerId);
+  });
+  stage.addEventListener("pointermove", (event) => {
+    if (!dragStart) return;
+    const end = imagePoint(event);
+    const values = [
+      Math.min(dragStart.x, end.x),
+      Math.min(dragStart.y, end.y),
+      Math.abs(end.x - dragStart.x),
+      Math.abs(end.y - dragStart.y),
+    ];
+    // Round dimensions inward so 100% bounds never overflow by rounding.
+    regionFields.forEach((field, index) => {
+      field.value = (Math.floor(values[index] * 1000) / 10).toFixed(1);
+    });
+    drawRegion();
+  });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((name) =>
+    stage.addEventListener(name, () => {
+      dragStart = null;
+    }),
+  );
+  document
+    .getElementById("btn-ocr-region-run")
+    .addEventListener("click", () => {
+      if (ocrSourceFile) handleOcrFile(ocrSourceFile, false, false);
+    });
+
+  function handleOcrFile(file, autoRank = true, resetRegion = true) {
     if (
       !file ||
       (!file.type.startsWith("image/") &&
@@ -461,6 +549,21 @@ document.addEventListener("DOMContentLoaded", () => {
       );
       return;
     }
+    if (resetRegion) {
+      useRegion.checked = false;
+      regionFields.forEach((field, index) => {
+        field.value = index < 2 ? "0" : "100";
+      });
+      drawRegion();
+    }
+    let roi;
+    try {
+      roi = selectedRegion();
+    } catch (error) {
+      showToast(error.message, "error");
+      return;
+    }
+    ocrSourceFile = file;
     if (ocrController) ocrController.abort();
     ocrController = new AbortController();
     const requestId = ++ocrRequestId;
@@ -480,10 +583,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const img = new Image();
       img.onload = () => {
-        ocrImageSize.textContent = `${img.width}×${img.height} px`;
+        if (requestId === ocrRequestId) {
+          ocrImageSize.textContent = `${img.width}×${img.height} px`;
+          drawRegion();
+        }
       };
       img.src = dataUrl;
 
+      if (
+        resetRegion &&
+        document.getElementById("ocr-select-region-first").checked
+      ) {
+        clearTimeout(timeoutId);
+        useRegion.checked = true;
+        document.getElementById("ocr-region-controls").open = true;
+        document.getElementById("ocr-spinner").classList.add("hidden");
+        ocrStatusText.textContent =
+          "Выделите область с никами и нажмите «Распознать снова». OCR ещё не запускался.";
+        switchToTab("tab-ocr");
+        drawRegion();
+        return;
+      }
       try {
         const resp = await apiFetch("/api/ocr-process", {
           method: "POST",
@@ -492,6 +612,7 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({
             image: dataUrl,
             layout: document.getElementById("ocr-layout").value,
+            roi,
           }),
         });
         const resData = await resp.json();
@@ -502,6 +623,7 @@ document.addEventListener("DOMContentLoaded", () => {
           resData.engine === "tesseract"
             ? "Локальный Tesseract"
             : "Windows OCR";
+        if (resData.cache_hit) ocrEngineBadge.textContent += " · из кэша";
         document.getElementById("ocr-raw-text").textContent =
           resData.raw_ocr || "";
         if (resData.candidates && resData.candidates.length > 0) {
@@ -593,6 +715,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btnClearOcr.addEventListener("click", () => {
       ++ocrRequestId;
       if (ocrController) ocrController.abort();
+      ocrSourceFile = null;
+      useRegion.checked = false;
+      drawRegion();
       ocrPreviewImg.src = "";
       ocrPreviewContainer.classList.add("hidden");
       ocrDropZone.classList.remove("hidden");
@@ -1156,69 +1281,74 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    const rowsHtml = players
-      .map((p) => {
-        const rankClass =
-          currentSortOrder === "desc"
-            ? p.rank === 1
-              ? "rank-1"
-              : p.rank === 2
-                ? "rank-2"
-                : p.rank === 3
-                  ? "rank-3"
-                  : ""
-            : p.rank === 1
-              ? "rank-worst-1"
-              : p.rank === 2
-                ? "rank-worst-2"
-                : p.rank === 3
-                  ? "rank-worst-3"
-                  : "";
-        const isBayesian = selectRankingMode.value === "bayesian";
-        const displayScore = isBayesian ? p.bayesian_score : p.avg_rating;
+    const attention = (p) =>
+      ["ambiguous", "missing", "duplicate"].includes(p.status);
+    const reviewPlayers = players.filter(attention);
+    const otherPlayers = players.filter((p) => !attention(p));
+    function renderRows(items) {
+      return items
+        .map((p) => {
+          const rankClass =
+            currentSortOrder === "desc"
+              ? p.rank === 1
+                ? "rank-1"
+                : p.rank === 2
+                  ? "rank-2"
+                  : p.rank === 3
+                    ? "rank-3"
+                    : ""
+              : p.rank === 1
+                ? "rank-worst-1"
+                : p.rank === 2
+                  ? "rank-worst-2"
+                  : p.rank === 3
+                    ? "rank-worst-3"
+                    : "";
+          const isBayesian = selectRankingMode.value === "bayesian";
+          const displayScore = isBayesian ? p.bayesian_score : p.avg_rating;
 
-        let scoreBadgeClass = "score-none";
-        let scoreText = "-";
-        if (displayScore !== null && displayScore !== undefined) {
-          scoreText = `Балл ${Number(displayScore).toFixed(2)}`;
-          if (displayScore >= 4.5) scoreBadgeClass = "score-high";
-          else if (displayScore >= 3.5) scoreBadgeClass = "score-medium";
-          else if (displayScore >= 2.5) scoreBadgeClass = "score-low";
-          else scoreBadgeClass = "score-danger";
-        }
+          let scoreBadgeClass = "score-none";
+          let scoreText = "-";
+          if (displayScore !== null && displayScore !== undefined) {
+            scoreText = `Балл ${Number(displayScore).toFixed(2)}`;
+            if (displayScore >= 4.5) scoreBadgeClass = "score-high";
+            else if (displayScore >= 3.5) scoreBadgeClass = "score-medium";
+            else if (displayScore >= 2.5) scoreBadgeClass = "score-low";
+            else scoreBadgeClass = "score-danger";
+          }
 
-        let statusBadge = "";
-        if (p.status === "unrated") {
-          statusBadge = `<span class="player-status-badge badge-unrated">Нет оценок</span>`;
-        } else if (p.status === "missing") {
-          statusBadge = `<span class="player-status-badge badge-missing">Не найден</span>`;
-        } else if (p.status === "ambiguous") {
-          statusBadge = `<span class="player-status-badge badge-ambiguous">Нужна проверка</span>`;
-        } else if (p.status === "duplicate") {
-          statusBadge = `<span class="player-status-badge badge-duplicate">Повтор</span>`;
-        } else {
-          statusBadge = `<span class="player-status-badge badge-matched">В рейтинге</span>`;
-        }
+          let statusBadge = "";
+          if (p.status === "unrated") {
+            statusBadge = `<span class="player-status-badge badge-unrated">Нет оценок</span>`;
+          } else if (p.status === "missing") {
+            statusBadge = `<span class="player-status-badge badge-missing">Не найден</span>`;
+          } else if (p.status === "ambiguous") {
+            statusBadge = `<span class="player-status-badge badge-ambiguous">Нужна проверка</span>`;
+          } else if (p.status === "duplicate") {
+            statusBadge = `<span class="player-status-badge badge-duplicate">Повтор</span>`;
+          } else {
+            statusBadge = `<span class="player-status-badge badge-matched">В рейтинге</span>`;
+          }
 
-        const rawAvg =
-          p.avg_rating !== null && p.avg_rating !== undefined
-            ? Number(p.avg_rating).toFixed(2)
-            : "-";
-        const count = p.reviews_count || 0;
-        const avatarSrc = p.avatar_url || DEFAULT_AVATAR_SVG;
+          const rawAvg =
+            p.avg_rating !== null && p.avg_rating !== undefined
+              ? Number(p.avg_rating).toFixed(2)
+              : "-";
+          const count = p.reviews_count || 0;
+          const avatarSrc = p.avatar_url || DEFAULT_AVATAR_SVG;
 
-        const profileLink = p.player_id
-          ? `<a href="https://shinrireviews.com/p/${p.player_id}" target="_blank" rel="noopener noreferrer" class="player-name" title="Открыть профиль на сайте">${escapeHtml(p.name)}</a>`
-          : `<span class="player-name">${escapeHtml(p.name)}</span>`;
+          const profileLink = p.player_id
+            ? `<a href="https://shinrireviews.com/p/${p.player_id}" target="_blank" rel="noopener noreferrer" class="player-name" title="Открыть профиль на сайте">${escapeHtml(p.name)}</a>`
+            : `<span class="player-name">${escapeHtml(p.name)}</span>`;
 
-        const idTag = p.player_id
-          ? `<span class="player-id-tag">#${p.player_id}</span>`
-          : "";
-        const noteTag = p.note
-          ? `<span class="player-note" title="${escapeHtml(p.note)}">${escapeHtml(p.note)}</span>`
-          : "";
+          const idTag = p.player_id
+            ? `<span class="player-id-tag">#${p.player_id}</span>`
+            : "";
+          const noteTag = p.note
+            ? `<span class="player-note" title="${escapeHtml(p.note)}">${escapeHtml(p.note)}</span>`
+            : "";
 
-        return `
+          return `
         <div class="player-row" data-player-id="${p.player_id || ""}" data-player-name="${escapeHtml(p.name)}">
           <div class="player-rank ${rankClass}">#${p.rank}</div>
           <div class="player-avatar-wrap">
@@ -1243,11 +1373,69 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         </div>
       `;
-      })
-      .join("");
-
-    matchPlayersList.innerHTML = rowsHtml;
+        })
+        .join("");
+    }
+    matchPlayersList.innerHTML =
+      (reviewPlayers.length
+        ? `<h3 class="list-section-title review-section-title">Требуют проверки · ${reviewPlayers.length}</h3>` +
+          renderRows(reviewPlayers)
+        : "") +
+      (reviewPlayers.length && otherPlayers.length
+        ? `<h3 class="list-section-title">Остальные участники · ${otherPlayers.length}</h3>`
+        : "") +
+      renderRows(otherPlayers);
   }
+
+  const densitySelect = document.getElementById("select-density");
+  try {
+    const saved = localStorage.getItem("shinri_list_density");
+    if (["comfortable", "compact"].includes(saved)) densitySelect.value = saved;
+  } catch {
+    /* Storage can be unavailable in private mode. */
+  }
+  function applyDensity() {
+    document.getElementById("results-section").dataset.density =
+      densitySelect.value;
+  }
+  applyDensity();
+  densitySelect.addEventListener("change", () => {
+    applyDensity();
+    try {
+      localStorage.setItem("shinri_list_density", densitySelect.value);
+    } catch {
+      /* Keep the selected view for this session. */
+    }
+  });
+
+  const mobileCalculate = document.getElementById("btn-mobile-calculate");
+  const mobileBar = document.getElementById("mobile-action-bar");
+  function syncMobileAction() {
+    mobileCalculate.disabled = btnCalculate.disabled;
+    mobileCalculate.textContent = btnCalculate.disabled
+      ? "Расчёт…"
+      : "Рассчитать матч";
+    document.getElementById("mobile-match-count").textContent =
+      matchCounterText.textContent;
+    mobileBar.classList.toggle(
+      "hidden",
+      [...document.querySelectorAll(".modal-overlay")].some(
+        (dialog) => !dialog.classList.contains("hidden"),
+      ),
+    );
+  }
+  mobileCalculate.addEventListener("click", () => btnCalculate.click());
+  const actionObserver = new MutationObserver(syncMobileAction);
+  actionObserver.observe(btnCalculate, {
+    attributes: true,
+    childList: true,
+    subtree: true,
+  });
+  actionObserver.observe(matchCounterText, { childList: true, subtree: true });
+  document
+    .querySelectorAll(".modal-overlay")
+    .forEach((dialog) => actionObserver.observe(dialog, { attributes: true }));
+  syncMobileAction();
 
   // 11. Copy Match Roster
   btnCopyRoster.addEventListener("click", () => {

@@ -7,7 +7,7 @@ name = "shinri-ranker"
 version = "2.1.0"
 description = "Local lobby checker for Shinri Reviews and Danganronpa Online"
 requires-python = ">=3.10"
-dependencies = ["Pillow>=11.3,<13", "rich>=14.1,<15"]
+dependencies = ["Pillow>=11.3,<13", "rich>=14.1,<15", "urllib3>=2.6.3,<3"]
 
 [project.optional-dependencies]
 desktop = ["pywebview>=6,<7", "pythonnet>=3,<4; sys_platform == 'win32'"]

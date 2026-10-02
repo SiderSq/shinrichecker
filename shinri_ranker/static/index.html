@@ -107,6 +107,10 @@
                   <option value="grid">Сетка карточек 2×8 / 1×8</option>
                   <option value="text">Таблица или текст</option>
                 </select>
+                <label class="roi-toggle"
+                  ><input id="ocr-select-region-first" type="checkbox" />
+                  Сначала выделить область с никами</label
+                >
               </div>
               <div id="ocr-drop-zone" class="drop-zone">
                 <p class="drop-title">
@@ -129,11 +133,18 @@
                 class="ocr-preview-container hidden"
               >
                 <div class="ocr-image-preview-wrap">
-                  <img
-                    id="ocr-preview-img"
-                    class="ocr-preview-img"
-                    alt="Скриншот"
-                  />
+                  <div id="ocr-image-stage" class="ocr-image-stage">
+                    <img
+                      id="ocr-preview-img"
+                      class="ocr-preview-img"
+                      alt="Скриншот; область OCR можно выделить мышью или задать координатами"
+                    />
+                    <div
+                      id="ocr-region-selection"
+                      class="ocr-region-selection hidden"
+                      aria-hidden="true"
+                    ></div>
+                  </div>
                   <div class="ocr-image-meta">
                     <span id="ocr-image-size">0×0 px</span>
                     <button
@@ -145,6 +156,66 @@
                     </button>
                   </div>
                 </div>
+                <details class="ocr-region-controls" id="ocr-region-controls">
+                  <summary>Область распознавания</summary>
+                  <label class="roi-toggle"
+                    ><input id="ocr-use-region" type="checkbox" /> Только
+                    выделенная область</label
+                  >
+                  <p class="ocr-hint-text">
+                    Включите область и обведите ники на изображении или задайте
+                    координаты в процентах. Затем нажмите «Распознать снова».
+                  </p>
+                  <div class="roi-fields">
+                    <label for="roi-x"
+                      >Слева, %<input
+                        id="roi-x"
+                        type="number"
+                        class="form-control"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value="0"
+                    /></label>
+                    <label for="roi-y"
+                      >Сверху, %<input
+                        id="roi-y"
+                        type="number"
+                        class="form-control"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value="0"
+                    /></label>
+                    <label for="roi-width"
+                      >Ширина, %<input
+                        id="roi-width"
+                        type="number"
+                        class="form-control"
+                        min="0.1"
+                        max="100"
+                        step="0.1"
+                        value="100"
+                    /></label>
+                    <label for="roi-height"
+                      >Высота, %<input
+                        id="roi-height"
+                        type="number"
+                        class="form-control"
+                        min="0.1"
+                        max="100"
+                        step="0.1"
+                        value="100"
+                    /></label>
+                  </div>
+                  <button
+                    id="btn-ocr-region-run"
+                    class="btn btn-secondary"
+                    type="button"
+                  >
+                    Распознать снова
+                  </button>
+                </details>
                 <div class="ocr-status-bar" id="ocr-status-bar">
                   <span class="spinner-sm" id="ocr-spinner"></span>
                   <span id="ocr-status-text"
@@ -309,46 +380,49 @@
               </div>
             </div>
 
-            <!-- Match History Bar -->
-            <div id="match-history-bar" class="match-history-bar hidden">
-              <span class="history-label">История матчей:</span>
-              <div id="history-pills" class="history-pills"></div>
-              <button
-                id="btn-clear-history"
-                class="btn-clear-history"
-                title="Очистить историю"
-              >
-                ×
-              </button>
-            </div>
+            <details class="input-settings" id="input-settings">
+              <summary>Настройки и история</summary>
+              <!-- Match History Bar -->
+              <div id="match-history-bar" class="match-history-bar hidden">
+                <span class="history-label">История матчей:</span>
+                <div id="history-pills" class="history-pills"></div>
+                <button
+                  id="btn-clear-history"
+                  class="btn-clear-history"
+                  title="Очистить историю"
+                >
+                  ×
+                </button>
+              </div>
 
-            <!-- Config Row -->
-            <div class="config-row">
-              <div class="config-cell">
-                <label for="select-ranking-mode" class="config-label"
-                  >Алгоритм оценки:</label
-                >
-                <select
-                  id="select-ranking-mode"
-                  class="form-control form-control-sm"
-                >
-                  <option value="bayesian">Байесовский рейтинг</option>
-                  <option value="classic">Средняя оценка</option>
-                </select>
+              <!-- Config Row -->
+              <div class="config-row">
+                <div class="config-cell">
+                  <label for="select-ranking-mode" class="config-label"
+                    >Алгоритм оценки:</label
+                  >
+                  <select
+                    id="select-ranking-mode"
+                    class="form-control form-control-sm"
+                  >
+                    <option value="bayesian">Байесовский рейтинг</option>
+                    <option value="classic">Средняя оценка</option>
+                  </select>
+                </div>
+                <div class="config-cell">
+                  <label for="select-strategy" class="config-label"
+                    >Одинаковые ники (омонимы):</label
+                  >
+                  <select
+                    id="select-strategy"
+                    class="form-control form-control-sm"
+                  >
+                    <option value="most_reviews">Автовыбор по отзывам</option>
+                    <option value="manual" selected>Проверять вручную</option>
+                  </select>
+                </div>
               </div>
-              <div class="config-cell">
-                <label for="select-strategy" class="config-label"
-                  >Одинаковые ники (омонимы):</label
-                >
-                <select
-                  id="select-strategy"
-                  class="form-control form-control-sm"
-                >
-                  <option value="most_reviews">Автовыбор по отзывам</option>
-                  <option value="manual" selected>Проверять вручную</option>
-                </select>
-              </div>
-            </div>
+            </details>
 
             <!-- Calculate Action & Live Toggle -->
             <button id="btn-calculate" class="btn btn-primary btn-block btn-lg">
@@ -402,6 +476,13 @@
               </div>
 
               <!-- Sort Toggle & Search Toolbar -->
+              <div class="results-view-control">
+                <label for="select-density">Вид списка</label>
+                <select id="select-density" class="form-control">
+                  <option value="comfortable">Подробный</option>
+                  <option value="compact">Компактный</option>
+                </select>
+              </div>
               <div class="results-toolbar">
                 <div class="sort-toggle-group">
                   <button
@@ -606,6 +687,12 @@
       aria-live="polite"
     ></div>
 
+    <div id="mobile-action-bar" class="mobile-action-bar">
+      <span id="mobile-match-count">0 / 16</span>
+      <button id="btn-mobile-calculate" class="btn btn-primary" type="button">
+        Рассчитать матч
+      </button>
+    </div>
     <script src="/static/app.js"></script>
   </body>
 </html>
