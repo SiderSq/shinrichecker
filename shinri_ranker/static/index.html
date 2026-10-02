@@ -1,325 +1,618 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shinri Reviews ★ Оценка матча (16 игроков)</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-</head>
-<body>
-  <div class="app-container">
-    <!-- Header -->
-    <header class="header">
-      <div class="header-left">
-        <div class="logo-icon">★</div>
+  <head>
+    <meta charset="UTF-8" />
+    <!--SHINRI_BOOTSTRAP-->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shinri · Проверка лобби</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico" />
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-left">
+          <div class="logo-icon">★</div>
+          <div>
+            <h1 class="app-title">
+              Shinri <span class="badge-title">LOBBY CHECKER</span>
+            </h1>
+            <p class="app-subtitle">Отзывы сообщества · Danganronpa Online</p>
+          </div>
+        </div>
+        <div class="header-right">
+          <button
+            id="btn-theme"
+            class="btn btn-secondary btn-sm"
+            aria-label="Переключить цветовую тему"
+          >
+            ◐ Тема
+          </button>
+          <div id="status-badge" class="status-badge loading">
+            <span class="status-dot"></span>
+            <span id="status-text">Загрузка базы...</span>
+          </div>
+          <button
+            id="btn-refresh-db"
+            class="btn btn-secondary btn-sm"
+            title="Обновить базу с shinrireviews.com"
+          >
+            🔄 Обновить базу
+          </button>
+          <button
+            id="btn-import-db"
+            class="btn btn-secondary btn-sm"
+            title="Загрузить оффлайн-базу JSON"
+          >
+            📂 Импорт
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace-intro">
         <div>
-          <h1 class="app-title">Shinri Reviews <span class="badge-title">Оценка матча 16</span></h1>
-          <p class="app-subtitle">Единый рейтинг и оценки участников матча Danganronpa Online</p>
+          <p class="eyebrow">ПОДГОТОВКА К МАТЧУ</p>
+          <h2>Вся команда — в одном списке.</h2>
+          <p>
+            Добавьте ники или скриншот. Проверьте совпадения и сравните оценки
+            участников.
+          </p>
         </div>
-      </div>
-      <div class="header-right">
-        <div id="status-badge" class="status-badge loading">
-          <span class="status-dot"></span>
-          <span id="status-text">Загрузка базы...</span>
-        </div>
-        <button id="btn-refresh-db" class="btn btn-secondary btn-sm" title="Обновить базу с shinrireviews.com">
-          🔄 Обновить базу
-        </button>
-        <button id="btn-import-db" class="btn btn-secondary btn-sm" title="Загрузить оффлайн-базу JSON">
-          📂 Импорт
-        </button>
-      </div>
-    </header>
-
-    <!-- Main Content Layout -->
-    <main class="main-content">
-      <!-- Input Card -->
-      <section class="card input-card">
-        <div class="card-header">
-          <div class="card-title-group">
-            <h2 class="card-title">📥 Состав участников матча (16 игроков)</h2>
-            <p class="card-desc">Вставьте никнеймы, ссылки на профили или ID игроков</p>
+        <span class="local-badge">● Данные OCR остаются на устройстве</span>
+      </section>
+      <!-- Main Content Layout -->
+      <main class="main-content">
+        <!-- Input Card -->
+        <section class="card input-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <h2 class="card-title">01 · Состав лобби</h2>
+              <p class="card-desc">Ники, ссылки или ID — по одному на строку</p>
+            </div>
+            <div class="input-tabs" aria-label="Способ ввода">
+              <button class="tab-btn active" data-tab="tab-text">
+                Список ников
+              </button>
+              <button class="tab-btn" data-tab="tab-ocr" id="tab-btn-ocr">
+                📷 Скриншот (OCR)
+              </button>
+              <button class="tab-btn" data-tab="tab-chat">
+                💬 Лог чата лобби
+              </button>
+              <button class="tab-btn" data-tab="tab-file">
+                📁 Файл (.txt)
+              </button>
+            </div>
           </div>
-          <div class="input-tabs">
-            <button class="tab-btn active" data-tab="tab-text">Список ников</button>
-            <button class="tab-btn" data-tab="tab-ocr" id="tab-btn-ocr">📷 Скриншот (OCR)</button>
-            <button class="tab-btn" data-tab="tab-chat">💬 Лог чата лобби</button>
-            <button class="tab-btn" data-tab="tab-file">📁 Файл (.txt)</button>
-          </div>
-        </div>
 
-        <div class="card-body">
-          <!-- Text Input Tab -->
-          <div id="tab-text" class="tab-content active">
-            <textarea
-              id="players-input"
-              class="form-control text-area"
-              placeholder="Введите 16 игроков по одному на строку:
+          <div class="card-body">
+            <!-- Text Input Tab -->
+            <div id="tab-text" class="tab-content active">
+              <textarea
+                aria-label="Список участников матча"
+                id="players-input"
+                class="form-control text-area"
+                placeholder="Введите 16 игроков по одному на строку:
 • Имя / Никнейм (Hunk, mercyflower^-^, BaobabBack...)
 • Ссылка (https://shinrireviews.com/p/3865)
 • Числовой ID (#3865 или 35262)"
-            ></textarea>
-          </div>
-
-          <!-- OCR Screenshot Tab -->
-          <div id="tab-ocr" class="tab-content">
-            <div id="ocr-drop-zone" class="drop-zone">
-              <div class="drop-icon">📷</div>
-              <p class="drop-title">Перетащите скриншот лобби/таблицы или нажмите для выбора</p>
-              <p class="drop-subtitle">Либо просто нажмите <kbd>Ctrl</kbd>+<kbd>V</kbd> в любом месте программы</p>
-              <input type="file" id="ocr-file-input" accept="image/*" class="file-input-hidden">
+              ></textarea>
             </div>
 
-            <div id="ocr-preview-container" class="ocr-preview-container hidden">
-              <div class="ocr-image-preview-wrap">
-                <img id="ocr-preview-img" class="ocr-preview-img" alt="Скриншот">
-                <div class="ocr-image-meta">
-                  <span id="ocr-image-size">0×0 px</span>
-                  <button id="btn-clear-ocr" class="btn-remove" title="Удалить скриншот">✕</button>
-                </div>
+            <!-- OCR Screenshot Tab -->
+            <div id="tab-ocr" class="tab-content">
+              <div class="ocr-config">
+                <label for="ocr-layout">Макет скриншота</label>
+                <select id="ocr-layout" class="form-control">
+                  <option value="auto">Определить автоматически</option>
+                  <option value="grid">Сетка карточек 2×8 / 1×8</option>
+                  <option value="text">Таблица или текст</option>
+                </select>
               </div>
-              <div class="ocr-status-bar" id="ocr-status-bar">
-                <span class="spinner-sm" id="ocr-spinner"></span>
-                <span id="ocr-status-text">Распознавание игроков через Windows OCR...</span>
+              <div id="ocr-drop-zone" class="drop-zone">
+                <div class="drop-icon">📷</div>
+                <p class="drop-title">
+                  Перетащите скриншот лобби/таблицы или нажмите для выбора
+                </p>
+                <p class="drop-subtitle">
+                  Либо просто нажмите <kbd>Ctrl</kbd>+<kbd>V</kbd> в любом месте
+                  программы
+                </p>
+                <input
+                  type="file"
+                  id="ocr-file-input"
+                  accept="image/*"
+                  class="file-input-hidden"
+                />
               </div>
-              <div id="ocr-results-summary" class="ocr-results-summary hidden">
-                <div class="ocr-summary-header">
-                  <div class="ocr-found-badge" id="ocr-found-badge">✓ Распознано игроков: 0</div>
-                  <span class="ocr-engine-badge" id="ocr-engine-badge">Windows Media OCR</span>
-                </div>
 
-                <!-- Interactive Chips List of Recognized Players -->
-                <div class="ocr-chips-wrap">
-                  <div class="ocr-chips-title">Распознанные участники (нажмите ✕ для исключения):</div>
-                  <div id="ocr-chips-container" class="ocr-chips-container"></div>
-                  <div class="ocr-add-chip-row">
-                    <input type="text" id="ocr-add-player-input" class="ocr-add-player-input" placeholder="+ Добавить ник вручную...">
-                    <button id="btn-ocr-add-player" class="btn btn-secondary btn-sm" type="button">Добавить</button>
+              <div
+                id="ocr-preview-container"
+                class="ocr-preview-container hidden"
+              >
+                <div class="ocr-image-preview-wrap">
+                  <img
+                    id="ocr-preview-img"
+                    class="ocr-preview-img"
+                    alt="Скриншот"
+                  />
+                  <div class="ocr-image-meta">
+                    <span id="ocr-image-size">0×0 px</span>
+                    <button
+                      id="btn-clear-ocr"
+                      class="btn-remove"
+                      title="Удалить скриншот"
+                    >
+                      ×
+                    </button>
                   </div>
                 </div>
-
-                <div class="ocr-actions">
-                  <button id="btn-apply-ocr" class="btn btn-primary btn-sm" type="button">
-                    ✅ Загрузить в список матча
-                  </button>
-                  <button id="btn-ocr-calc-now" class="btn btn-accent btn-sm" type="button" title="Сразу перейти к рейтингу матча">
-                    ⚡ Рассчитать рейтинг
-                  </button>
-                  <button id="btn-copy-ocr-list" class="btn btn-secondary btn-sm" type="button" title="Скопировать ники в буфер">
-                    📋 Скопировать
-                  </button>
+                <div class="ocr-status-bar" id="ocr-status-bar">
+                  <span class="spinner-sm" id="ocr-spinner"></span>
+                  <span id="ocr-status-text"
+                    >Распознавание локальным OCR-движком…</span
+                  >
                 </div>
+                <details class="ocr-raw">
+                  <summary>Исходный текст OCR</summary>
+                  <pre id="ocr-raw-text"></pre>
+                </details>
+                <div
+                  id="ocr-results-summary"
+                  class="ocr-results-summary hidden"
+                >
+                  <div class="ocr-summary-header">
+                    <div class="ocr-found-badge" id="ocr-found-badge">
+                      ✓ Распознано игроков: 0
+                    </div>
+                    <span class="ocr-engine-badge" id="ocr-engine-badge"
+                      >Windows Media OCR</span
+                    >
+                  </div>
+
+                  <!-- Interactive Chips List of Recognized Players -->
+                  <div class="ocr-chips-wrap">
+                    <div class="ocr-chips-title">
+                      Проверьте участников · сходство строки — не гарантия
+                      личности
+                    </div>
+                    <div
+                      id="ocr-chips-container"
+                      class="ocr-chips-container"
+                    ></div>
+                    <div class="ocr-add-chip-row">
+                      <input
+                        type="text"
+                        id="ocr-add-player-input"
+                        class="ocr-add-player-input"
+                        placeholder="+ Добавить ник вручную..."
+                      />
+                      <button
+                        id="btn-ocr-add-player"
+                        class="btn btn-secondary btn-sm"
+                        type="button"
+                      >
+                        Добавить
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="ocr-actions">
+                    <button
+                      id="btn-apply-ocr"
+                      class="btn btn-primary btn-sm"
+                      type="button"
+                    >
+                      ✅ Загрузить в список матча
+                    </button>
+                    <button
+                      id="btn-ocr-calc-now"
+                      class="btn btn-accent btn-sm"
+                      type="button"
+                      title="Сразу перейти к рейтингу матча"
+                    >
+                      ⚡ Рассчитать рейтинг
+                    </button>
+                    <button
+                      id="btn-copy-ocr-list"
+                      class="btn btn-secondary btn-sm"
+                      type="button"
+                      title="Скопировать ники в буфер"
+                    >
+                      📋 Скопировать
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="ocr-toolbar">
+                <button
+                  id="btn-paste-ocr"
+                  class="btn btn-secondary btn-sm"
+                  title="Вставить изображение из буфера обмена"
+                >
+                  📋 Вставить из буфера (Ctrl+V)
+                </button>
+                <span class="ocr-hint-text"
+                  >💡 Сделайте скриншот (Win+Shift+S) и нажмите Ctrl+V в
+                  окне</span
+                >
               </div>
             </div>
 
-            <div class="ocr-toolbar">
-              <button id="btn-paste-ocr" class="btn btn-secondary btn-sm" title="Вставить изображение из буфера обмена">
-                📋 Вставить из буфера (Ctrl+V)
-              </button>
-              <span class="ocr-hint-text">💡 Сделайте скриншот (Win+Shift+S) и нажмите Ctrl+V в окне</span>
-            </div>
-          </div>
-
-          <!-- Chat Log Parser Tab -->
-          <div id="tab-chat" class="tab-content">
-            <textarea
-              id="chat-log-input"
-              class="form-control text-area"
-              placeholder="Вставьте лог комнаты или чата лобби:
+            <!-- Chat Log Parser Tab -->
+            <div id="tab-chat" class="tab-content">
+              <textarea
+                aria-label="Лог чата лобби"
+                id="chat-log-input"
+                class="form-control text-area"
+                placeholder="Вставьте лог комнаты или чата лобби:
 [18:40:12] Hunk вошел в комнату
 Комната #1 (16/16): mercyflower^-^, FallenAngel, BaobabBack, cucumber...
 [18:41:00] FallenAngel: начинаем"
-            ></textarea>
-            <div class="tab-actions">
-              <button id="btn-sample-chat" class="btn-link">💬 Пример лога лобби</button>
-              <button id="btn-extract-chat" class="btn btn-sm btn-secondary">⚡ Извлечь ники</button>
+              ></textarea>
+              <div class="tab-actions">
+                <button id="btn-sample-chat" class="btn-link">
+                  💬 Пример лога лобби
+                </button>
+                <button id="btn-extract-chat" class="btn btn-sm btn-secondary">
+                  ⚡ Извлечь ники
+                </button>
+              </div>
             </div>
-          </div>
 
-          <!-- File Upload Tab -->
-          <div id="tab-file" class="tab-content">
-            <div id="drop-zone" class="drop-zone">
-              <div class="drop-icon">📁</div>
-              <p class="drop-title">Перетащите файл со списком игроков (.txt, .csv)</p>
-              <input type="file" id="file-input" accept=".txt,.csv" class="file-input-hidden">
+            <!-- File Upload Tab -->
+            <div id="tab-file" class="tab-content">
+              <div id="drop-zone" class="drop-zone">
+                <div class="drop-icon">📁</div>
+                <p class="drop-title">
+                  Перетащите файл со списком игроков (.txt, .csv)
+                </p>
+                <input
+                  type="file"
+                  id="file-input"
+                  accept=".txt,.csv"
+                  class="file-input-hidden"
+                />
+              </div>
+              <div id="file-info" class="file-info hidden">
+                <span id="file-name" class="file-name"></span>
+                <button id="btn-remove-file" class="btn-remove">×</button>
+              </div>
             </div>
-            <div id="file-info" class="file-info hidden">
-              <span id="file-name" class="file-name"></span>
-              <button id="btn-remove-file" class="btn-remove">✕</button>
-            </div>
-          </div>
 
-          <!-- Input Toolbar and Counter -->
-          <div class="input-toolbar">
-            <div class="helpers-left">
-              <button id="btn-sample-data" class="btn btn-secondary btn-sm" title="Заполнить готовым матчем на 16 игроков">
-                📋 Пример матча (16 игроков)
+            <!-- Input Toolbar and Counter -->
+            <div class="input-toolbar">
+              <div class="helpers-left">
+                <button
+                  id="btn-sample-data"
+                  class="btn btn-secondary btn-sm"
+                  title="Заполнить готовым матчем на 16 игроков"
+                >
+                  📋 Пример матча (16 игроков)
+                </button>
+                <button
+                  id="btn-dedup-input"
+                  class="btn-link"
+                  title="Удалить повторяющиеся строки"
+                >
+                  🧹 Без повторов
+                </button>
+                <button
+                  id="btn-clear-input"
+                  class="btn-link text-muted"
+                  title="Очистить поле ввода"
+                >
+                  🗑️ Очистить
+                </button>
+              </div>
+              <div id="match-counter" class="match-counter-pill counter-empty">
+                <span id="match-counter-dot" class="counter-dot"></span>
+                <span id="match-counter-text">0 / 16 участников</span>
+              </div>
+            </div>
+
+            <!-- Match History Bar -->
+            <div id="match-history-bar" class="match-history-bar hidden">
+              <span class="history-label">🕒 История матчей:</span>
+              <div id="history-pills" class="history-pills"></div>
+              <button
+                id="btn-clear-history"
+                class="btn-clear-history"
+                title="Очистить историю"
+              >
+                ×
               </button>
-              <button id="btn-dedup-input" class="btn-link" title="Удалить повторяющиеся строки">
-                🧹 Без повторов
-              </button>
-              <button id="btn-clear-input" class="btn-link text-muted" title="Очистить поле ввода">
-                🗑️ Очистить
-              </button>
             </div>
-            <div id="match-counter" class="match-counter-pill counter-empty">
-              <span id="match-counter-dot" class="counter-dot"></span>
-              <span id="match-counter-text">0 / 16 участников</span>
+
+            <!-- Config Row -->
+            <div class="config-row">
+              <div class="config-cell">
+                <label for="select-ranking-mode" class="config-label"
+                  >Алгоритм оценки:</label
+                >
+                <select
+                  id="select-ranking-mode"
+                  class="form-control form-control-sm"
+                >
+                  <option value="bayesian">Байесовский рейтинг</option>
+                  <option value="classic">Средняя оценка</option>
+                </select>
+              </div>
+              <div class="config-cell">
+                <label for="select-strategy" class="config-label"
+                  >Одинаковые ники (омонимы):</label
+                >
+                <select
+                  id="select-strategy"
+                  class="form-control form-control-sm"
+                >
+                  <option value="most_reviews">Автовыбор по отзывам</option>
+                  <option value="manual" selected>Проверять вручную</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Calculate Action & Live Toggle -->
+            <button id="btn-calculate" class="btn btn-primary btn-block btn-lg">
+              <span class="btn-icon">⚡</span> Рассчитать рейтинг матча
+              <span class="btn-kbd-badge"
+                ><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span
+              >
+            </button>
+            <div class="live-eval-status">
+              <label
+                class="live-toggle-label"
+                title="Автоматически рассчитывать рейтинг при вставке 16 игроков или скриншота"
+              >
+                <input type="checkbox" id="check-live-eval" checked />
+                <span class="live-toggle-indicator"></span>
+                <span class="live-toggle-text"
+                  >⚡ Мгновенный авто-расчет на лету (при 16 игроках и по
+                  Ctrl+V)</span
+                >
+              </label>
             </div>
           </div>
+        </section>
 
-          <!-- Match History Bar -->
-          <div id="match-history-bar" class="match-history-bar hidden">
-            <span class="history-label">🕒 История матчей:</span>
-            <div id="history-pills" class="history-pills"></div>
-            <button id="btn-clear-history" class="btn-clear-history" title="Очистить историю">✕</button>
-          </div>
-
-          <!-- Config Row -->
-          <div class="config-row">
-            <div class="config-cell">
-              <label for="select-ranking-mode" class="config-label">Алгоритм оценки:</label>
-              <select id="select-ranking-mode" class="form-control form-control-sm">
-                <option value="bayesian">🌟 Байесовский балл (взвешенная надежность)</option>
-                <option value="classic">📊 Классический средний балл</option>
-              </select>
+        <!-- Results Section -->
+        <section id="results-section" class="results-section">
+          <div class="summary-metrics" aria-label="Сводка состава">
+            <div>
+              <span id="metric-found">—</span>
+              <p>Профилей найдено</p>
             </div>
-            <div class="config-cell">
-              <label for="select-strategy" class="config-label">Одинаковые ники (омонимы):</label>
-              <select id="select-strategy" class="form-control form-control-sm">
-                <option value="most_reviews">Автовыбор с наибольшим числом отзывов</option>
-                <option value="manual">Выделять для ручной проверки</option>
-              </select>
+            <div>
+              <span id="metric-rated">—</span>
+              <p>С оценками</p>
+            </div>
+            <div>
+              <span id="metric-review">—</span>
+              <p>К проверке</p>
             </div>
           </div>
+          <!-- Validation / Status Message Banner -->
+          <div id="validation-banner" class="validation-banner hidden"></div>
 
-          <!-- Calculate Action & Live Toggle -->
-          <button id="btn-calculate" class="btn btn-primary btn-block btn-lg">
-            <span class="btn-icon">⚡</span> Рассчитать рейтинг матча
-            <span class="btn-kbd-badge"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
+          <!-- Results Header & Controls -->
+          <div class="results-card card">
+            <div class="results-header">
+              <div class="results-title-group">
+                <h2 class="card-title">02 · Участники матча</h2>
+                <div id="results-meta" class="results-meta">
+                  Средние оценки и число отзывов
+                </div>
+              </div>
+
+              <!-- Sort Toggle & Search Toolbar -->
+              <div class="results-toolbar">
+                <div class="sort-toggle-group">
+                  <button
+                    id="btn-sort-desc"
+                    class="sort-toggle-btn active"
+                    title="Сортировка: лучшие вверху, худшие внизу"
+                  >
+                    Лучшие сначала
+                  </button>
+                  <button
+                    id="btn-sort-asc"
+                    class="sort-toggle-btn"
+                    title="Сортировка: худшие вверху, лучшие внизу"
+                  >
+                    Худшие сначала
+                  </button>
+                </div>
+
+                <div class="search-wrap">
+                  <span class="search-icon">🔍</span>
+                  <input
+                    type="text"
+                    id="player-filter-input"
+                    aria-label="Поиск участника"
+                    class="search-input"
+                    placeholder="Поиск участника..."
+                  />
+                  <button
+                    id="btn-clear-filter"
+                    aria-label="Очистить поиск"
+                    class="btn-clear-filter hidden"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <button
+                  id="btn-copy-roster"
+                  class="btn btn-secondary btn-sm"
+                  title="Скопировать рейтинг матча в буфер обмена"
+                >
+                  📋 Скопировать список
+                </button>
+              </div>
+            </div>
+
+            <!-- Unified Match Players List -->
+            <div class="card-body p-0">
+              <p
+                id="rank-status"
+                class="rank-status"
+                role="status"
+                aria-live="polite"
+              >
+                Готово к проверке
+              </p>
+              <div id="results-empty" class="empty-results">
+                <span class="empty-mark" aria-hidden="true">◎</span>
+                <h3>Здесь появится ваше лобби</h3>
+                <p>
+                  Добавьте участников слева или вставьте скриншот через Ctrl+V.
+                </p>
+                <span
+                  >Оценки отражают отзывы сообщества, а не гарантируют поведение
+                  игрока.</span
+                >
+              </div>
+              <div id="match-players-list" class="match-players-list"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Player Details Modal -->
+    <div
+      id="player-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-player-name"
+    >
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-header-profile">
+            <div class="player-avatar-wrap">
+              <img
+                id="modal-avatar"
+                src="/default_avatar.svg"
+                alt=""
+                class="player-avatar-img"
+              />
+            </div>
+            <div>
+              <h3 class="modal-title" id="modal-player-name">Игрок</h3>
+              <span class="player-id-pill" id="modal-player-id">ID: 0</span>
+            </div>
+          </div>
+          <button
+            id="btn-close-player-modal"
+            aria-label="Закрыть отзывы"
+            class="btn-close"
+          >
+            ×
           </button>
-          <div class="live-eval-status">
-            <label class="live-toggle-label" title="Автоматически рассчитывать рейтинг при вставке 16 игроков или скриншота">
-              <input type="checkbox" id="check-live-eval" checked>
-              <span class="live-toggle-indicator"></span>
-              <span class="live-toggle-text">⚡ Мгновенный авто-расчет на лету (при 16 игроках и по Ctrl+V)</span>
-            </label>
-          </div>
         </div>
-      </section>
-
-      <!-- Results Section -->
-      <section id="results-section" class="results-section hidden">
-        <!-- Validation / Status Message Banner -->
-        <div id="validation-banner" class="validation-banner hidden"></div>
-
-        <!-- Results Header & Controls -->
-        <div class="results-card card">
-          <div class="results-header">
-            <div class="results-title-group">
-              <h2 class="card-title">🎮 Единый рейтинг матча</h2>
-              <div id="results-meta" class="results-meta">16 участников</div>
-            </div>
-
-            <!-- Sort Toggle & Search Toolbar -->
-            <div class="results-toolbar">
-              <div class="sort-toggle-group">
-                <button id="btn-sort-desc" class="sort-toggle-btn active" title="Сортировка: лучшие вверху, худшие внизу">
-                  🏆 От лучших к худшим
-                </button>
-                <button id="btn-sort-asc" class="sort-toggle-btn" title="Сортировка: худшие вверху, лучшие внизу">
-                  ⚠️ От худших к лучшим
-                </button>
-              </div>
-
-              <div class="search-wrap">
-                <span class="search-icon">🔍</span>
-                <input type="text" id="player-filter-input" class="search-input" placeholder="Поиск участника...">
-                <button id="btn-clear-filter" class="btn-clear-filter hidden">✕</button>
-              </div>
-
-              <button id="btn-copy-roster" class="btn btn-secondary btn-sm" title="Скопировать рейтинг матча в буфер обмена">
-                📋 Скопировать список
-              </button>
-            </div>
-          </div>
-
-          <!-- Unified Match Players List -->
-          <div class="card-body p-0">
-            <div id="match-players-list" class="match-players-list"></div>
-          </div>
+        <div class="modal-body" id="modal-player-body">
+          <div class="loading-spinner">Загрузка данных отзывов...</div>
         </div>
-      </section>
-    </main>
-  </div>
-
-  <!-- Player Details Modal -->
-  <div id="player-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="modal-header">
-        <div class="modal-header-profile">
-          <div class="player-avatar-wrap">
-            <img id="modal-avatar" src="/default_avatar.svg" alt="" class="player-avatar-img" onerror="handleAvatarError(this)">
-          </div>
-          <div>
-            <h3 class="modal-title" id="modal-player-name">Игрок</h3>
-            <span class="player-id-pill" id="modal-player-id">ID: 0</span>
-          </div>
-        </div>
-        <button id="btn-close-player-modal" class="btn-close">✕</button>
-      </div>
-      <div class="modal-body" id="modal-player-body">
-        <div class="loading-spinner">Загрузка данных отзывов...</div>
       </div>
     </div>
-  </div>
 
-  <!-- Offline Import Modal -->
-  <div id="import-modal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3 class="modal-title">Импорт оффлайн-базы рейтингов</h3>
-        <button id="btn-close-modal" class="btn-close">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">
-          Загрузите JSON-файл базы (например, <code>shinri_ratings_cache.json</code>) для автономной работы.
-        </p>
-        <input type="file" id="import-file-input" accept=".json" class="form-control">
-      </div>
-      <div class="modal-footer">
-        <button id="btn-submit-import" class="btn btn-primary">Импортировать базу</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Quick Swap Player Modal -->
-  <div id="swap-modal" class="modal-overlay hidden">
-    <div class="modal-card modal-card-sm">
-      <div class="modal-header">
-        <h3 class="modal-title">⇄ Быстрая замена игрока</h3>
-        <button id="btn-close-swap-modal" class="btn-close">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc" id="swap-modal-desc">
-          Заменить игрока в текущем составе матча:
-        </p>
-        <div class="form-group" style="margin-top: 12px;">
-          <label for="swap-new-player-input" class="config-label">Новый никнейм или ID:</label>
-          <input type="text" id="swap-new-player-input" class="form-control" placeholder="Например: Hunk или 3865" autocomplete="off">
+    <!-- Offline Import Modal -->
+    <div
+      id="import-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-title"
+    >
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="import-title" class="modal-title">
+            Импорт оффлайн-базы рейтингов
+          </h3>
+          <button
+            id="btn-close-modal"
+            aria-label="Закрыть импорт"
+            class="btn-close"
+          >
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">
+            Загрузите JSON-файл базы (например,
+            <code>shinri_ratings_cache.json</code>) для автономной работы.
+          </p>
+          <input
+            type="file"
+            id="import-file-input"
+            accept=".json"
+            class="form-control"
+          />
+        </div>
+        <div class="modal-footer">
+          <button id="btn-submit-import" class="btn btn-primary">
+            Импортировать базу
+          </button>
         </div>
       </div>
-      <div class="modal-footer">
-        <button id="btn-cancel-swap" class="btn btn-secondary">Отмена</button>
-        <button id="btn-confirm-swap" class="btn btn-primary">⚡ Заменить и пересчитать</button>
+    </div>
+
+    <!-- Quick Swap Player Modal -->
+    <div
+      id="swap-modal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="swap-title"
+    >
+      <div class="modal-card modal-card-sm">
+        <div class="modal-header">
+          <h3 id="swap-title" class="modal-title">⇄ Быстрая замена игрока</h3>
+          <button
+            id="btn-close-swap-modal"
+            aria-label="Закрыть замену"
+            class="btn-close"
+          >
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc" id="swap-modal-desc">
+            Заменить игрока в текущем составе матча:
+          </p>
+          <div class="form-group" style="margin-top: 12px">
+            <label for="swap-new-player-input" class="config-label"
+              >Новый никнейм или ID:</label
+            >
+            <input
+              type="text"
+              id="swap-new-player-input"
+              class="form-control"
+              placeholder="Например: Hunk или 3865"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-swap" class="btn btn-secondary">Отмена</button>
+          <button id="btn-confirm-swap" class="btn btn-primary">
+            ⚡ Заменить и пересчитать
+          </button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Toast Notification Container -->
-  <div id="toast-container" class="toast-container"></div>
+    <!-- Toast Notification Container -->
+    <div
+      id="toast-container"
+      class="toast-container"
+      role="status"
+      aria-live="polite"
+    ></div>
 
-  <script src="/static/app.js"></script>
-</body>
+    <script src="/static/app.js"></script>
+  </body>
 </html>

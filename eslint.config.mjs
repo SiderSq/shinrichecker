@@ -1,0 +1,40 @@
+export default [
+  {
+    files: ["shinri_ranker/static/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "script",
+      globals: Object.fromEntries(
+        [
+          "window",
+          "document",
+          "navigator",
+          "localStorage",
+          "fetch",
+          "Headers",
+          "AbortController",
+          "FileReader",
+          "Image",
+          "Option",
+          "HTMLElement",
+          "HTMLImageElement",
+          "MutationObserver",
+          "setTimeout",
+          "clearTimeout",
+          "console",
+          "alert",
+          "confirm",
+          "Blob",
+          "URL",
+          "File",
+          "ClipboardItem",
+        ].map((name) => [name, "readonly"]),
+      ),
+    },
+    rules: {
+      "no-undef": "error",
+      "no-unreachable": "error",
+      "no-dupe-keys": "error",
+    },
+  },
+];

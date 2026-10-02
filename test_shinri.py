@@ -85,7 +85,13 @@ class TestProfileMatcherAndRanker(unittest.TestCase):
     def setUp(self):
         self.mock_ratings = [
             {"playerId": 3865, "playerName": "Hunk", "count": 94, "avg": 5.0, "last": 1000},
-            {"playerId": 37725, "playerName": "mercyflower^-^", "count": 62, "avg": 5.0, "last": 1000},
+            {
+                "playerId": 37725,
+                "playerName": "mercyflower^-^",
+                "count": 62,
+                "avg": 5.0,
+                "last": 1000,
+            },
             {"playerId": 65995, "playerName": "Bun|dimebag", "count": 7, "avg": 1.0, "last": 1000},
             {"playerId": 35031, "playerName": "cucumber", "count": 3, "avg": 1.0, "last": 1000},
             {"playerId": 1001, "playerName": "MidPlayer", "count": 10, "avg": 3.5, "last": 1000},
@@ -138,11 +144,11 @@ class TestProfileMatcherAndRanker(unittest.TestCase):
     def test_ranking_sort_order(self):
         matcher = ProfileMatcher(self.client)
         raw_items = [
-            InputParser.parse_line("Hunk", 1),            # avg: 5.0, count: 94
+            InputParser.parse_line("Hunk", 1),  # avg: 5.0, count: 94
             InputParser.parse_line("mercyflower^-^", 2),  # avg: 5.0, count: 62
-            InputParser.parse_line("MidPlayer", 3),       # avg: 3.5, count: 10
-            InputParser.parse_line("cucumber", 4),        # avg: 1.0, count: 3
-            InputParser.parse_line("Bun|dimebag", 5),     # avg: 1.0, count: 7
+            InputParser.parse_line("MidPlayer", 3),  # avg: 3.5, count: 10
+            InputParser.parse_line("cucumber", 4),  # avg: 1.0, count: 3
+            InputParser.parse_line("Bun|dimebag", 5),  # avg: 1.0, count: 7
         ]
         results = matcher.process_items(raw_items)
         report = Ranker.generate_report(results, top_n=2)
@@ -162,8 +168,8 @@ class TestProfileMatcherAndRanker(unittest.TestCase):
     def test_min_reviews_filter(self):
         matcher = ProfileMatcher(self.client)
         raw_items = [
-            InputParser.parse_line("Bun|dimebag", 1), # count 7
-            InputParser.parse_line("cucumber", 2),    # count 3
+            InputParser.parse_line("Bun|dimebag", 1),  # count 7
+            InputParser.parse_line("cucumber", 2),  # count 3
         ]
         results = matcher.process_items(raw_items)
         # min_reviews = 5: cucumber (3 reviews) should be excluded from ranked
@@ -177,10 +183,18 @@ class TestProfileMatcherAndRanker(unittest.TestCase):
 class TestExporters(unittest.TestCase):
     def setUp(self):
         self.client = ShinriClient(offline_mode=True)
-        self.client._populate_indexes([
-            {"playerId": 3865, "playerName": "Hunk", "count": 94, "avg": 5.0, "last": 1000},
-            {"playerId": 65995, "playerName": "Bun|dimebag", "count": 7, "avg": 1.0, "last": 1000},
-        ])
+        self.client._populate_indexes(
+            [
+                {"playerId": 3865, "playerName": "Hunk", "count": 94, "avg": 5.0, "last": 1000},
+                {
+                    "playerId": 65995,
+                    "playerName": "Bun|dimebag",
+                    "count": 7,
+                    "avg": 1.0,
+                    "last": 1000,
+                },
+            ]
+        )
         matcher = ProfileMatcher(self.client)
         raw_items = [
             InputParser.parse_line("Hunk", 1),
@@ -227,7 +241,13 @@ class TestAnalyticsAndOcr(unittest.TestCase):
     def setUp(self):
         self.mock_ratings = [
             {"playerId": 3865, "playerName": "Hunk", "count": 94, "avg": 5.0, "last": 1000},
-            {"playerId": 37725, "playerName": "mercyflower^-^", "count": 62, "avg": 5.0, "last": 1000},
+            {
+                "playerId": 37725,
+                "playerName": "mercyflower^-^",
+                "count": 62,
+                "avg": 5.0,
+                "last": 1000,
+            },
             {"playerId": 65995, "playerName": "Bun|dimebag", "count": 7, "avg": 1.0, "last": 1000},
             {"playerId": 35031, "playerName": "cucumber", "count": 3, "avg": 1.0, "last": 1000},
             {"playerId": 1001, "playerName": "MidPlayer", "count": 10, "avg": 3.5, "last": 1000},
@@ -238,6 +258,7 @@ class TestAnalyticsAndOcr(unittest.TestCase):
 
     def test_team_balancer_equal_splits(self):
         from shinri_ranker.analytics import TeamBalancer
+
         players = [
             {"name": "P1", "bayesian_score": 5.0},
             {"name": "P2", "bayesian_score": 4.8},
@@ -252,6 +273,7 @@ class TestAnalyticsAndOcr(unittest.TestCase):
 
     def test_team_balancer_manual_roster_stats(self):
         from shinri_ranker.analytics import TeamBalancer
+
         team_a = [
             {"name": "A1", "bayesian_score": 5.0, "avg_rating": 5.0},
             {"name": "A2", "bayesian_score": 4.5, "avg_rating": 4.5},
@@ -272,6 +294,7 @@ class TestAnalyticsAndOcr(unittest.TestCase):
 
     def test_lobby_safety_meter_safe_and_risk(self):
         from shinri_ranker.analytics import LobbySafetyMeter
+
         safe_ranked = [
             {"name": "Good1", "avg_rating": 4.9, "reviews_count": 20},
             {"name": "Good2", "avg_rating": 4.8, "reviews_count": 15},
@@ -294,6 +317,7 @@ class TestAnalyticsAndOcr(unittest.TestCase):
 
     def test_ocr_token_cleaning(self):
         from shinri_ranker.ocr import OcrProcessor
+
         self.assertEqual(OcrProcessor.clean_ocr_token("[12:34:56] Hunk:"), "Hunk")
         self.assertEqual(OcrProcessor.clean_ocr_token("Pateti 120ms"), "Pateti")
         self.assertEqual(OcrProcessor.clean_ocr_token("#3865"), "3865")
@@ -301,9 +325,12 @@ class TestAnalyticsAndOcr(unittest.TestCase):
 
     def test_ocr_process_screenshot_text_and_fuzzy(self):
         from shinri_ranker.ocr import OcrProcessor
+
         # mercyfllower has typo, Hunk is exact, cucumber is exact
         text = "Hunk mercyfllower cucumber"
-        candidates = OcrProcessor.process_screenshot_text(text, self.client, auto_fuzzy_correct=True)
+        candidates = OcrProcessor.process_screenshot_text(
+            text, self.client, auto_fuzzy_correct=True
+        )
         matched_names = [c["matched_name"] for c in candidates]
         self.assertIn("Hunk", matched_names)
         self.assertIn("mercyflower^-^", matched_names)
@@ -318,6 +345,7 @@ class TestAnalyticsAndOcr(unittest.TestCase):
         from shinri_ranker.ocr import OcrProcessor
         from PIL import Image
         import io
+
         img = Image.new("RGB", (300, 100), color=(255, 255, 255))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -328,34 +356,76 @@ class TestAnalyticsAndOcr(unittest.TestCase):
 
     def test_ocr_character_subtitles_filter(self):
         from shinri_ranker.ocr import OcrProcessor
+
         subtitles = [
-            "Кокичи Ома", "Сония Невермай", "Леон Кувата", "Бьякуя Тогами",
-            "Рантаро Амами", "Химико Юмено", "Мукуро Икусаба", "Чиаки Нанами",
-            "Кёко Киригири", "Ю-ВО", "Макото Наэги", "Микан Цумики", "Саяка Майзоно",
-            "K0KM'-4V1", "Omar", "coma", "HeBepMaV1", "Neon", "Kasta",
-            "6bAKYA", "ToraMY1", "PaHTapo", "ArqaMb•1", "XVIMVIKO", "}OMeH0",
-            "MYKypo", "VIKyca6a", "quaKb•1", "Hag-larqn", "KéK0", "KupurupV1",
-            "K1-BO", "Mak0oto0", "Haru", "Minka", "Cam«a", "MaV130H0"
+            "Кокичи Ома",
+            "Сония Невермай",
+            "Леон Кувата",
+            "Бьякуя Тогами",
+            "Рантаро Амами",
+            "Химико Юмено",
+            "Мукуро Икусаба",
+            "Чиаки Нанами",
+            "Кёко Киригири",
+            "Ю-ВО",
+            "Макото Наэги",
+            "Микан Цумики",
+            "Саяка Майзоно",
+            "K0KM'-4V1",
+            "Omar",
+            "coma",
+            "HeBepMaV1",
+            "Neon",
+            "Kasta",
+            "6bAKYA",
+            "ToraMY1",
+            "PaHTapo",
+            "ArqaMb•1",
+            "XVIMVIKO",
+            "}OMeH0",
+            "MYKypo",
+            "VIKyca6a",
+            "quaKb•1",
+            "Hag-larqn",
+            "KéK0",
+            "KupurupV1",
+            "K1-BO",
+            "Mak0oto0",
+            "Haru",
+            "Minka",
+            "Cam«a",
+            "MaV130H0",
         ]
         for sub in subtitles:
             self.assertTrue(
                 OcrProcessor.is_danganronpa_character(sub),
-                f"Failed to identify character subtitle: {sub}"
+                f"Failed to identify character subtitle: {sub}",
             )
 
         players = [
-            "dinukio", "сельтипуд", "fzixnn", "Slayers", "Aggrest",
-            "k-angelkawaii", "slicemyheart", "jabanessa", "еррукар",
-            "Arestik", "Mood", "ворти", "илент1"
+            "dinukio",
+            "сельтипуд",
+            "fzixnn",
+            "Slayers",
+            "Aggrest",
+            "k-angelkawaii",
+            "slicemyheart",
+            "jabanessa",
+            "еррукар",
+            "Arestik",
+            "Mood",
+            "ворти",
+            "илент1",
         ]
         for p in players:
             self.assertFalse(
                 OcrProcessor.is_danganronpa_character(p),
-                f"Player should not be flagged as character: {p}"
+                f"Player should not be flagged as character: {p}",
             )
 
     def test_ocr_dehomoglyph_and_recombine(self):
         from shinri_ranker.ocr import OcrProcessor
+
         user_ocr_text = """dinukio
 K0KM'-4V1
 Omar
@@ -395,7 +465,9 @@ Minka
 mneHT1
 Cam«a
 MaV130H0"""
-        candidates = OcrProcessor.process_screenshot_text(user_ocr_text, self.client, auto_fuzzy_correct=True)
+        candidates = OcrProcessor.process_screenshot_text(
+            user_ocr_text, self.client, auto_fuzzy_correct=True
+        )
         # Should extract exactly 13 players
         self.assertEqual(len(candidates), 13)
         names = [c["matched_name"] for c in candidates]
@@ -414,6 +486,7 @@ MaV130H0"""
 
     def test_clan_detector(self):
         from shinri_ranker.analytics import ClanDetector
+
         tag, clean = ClanDetector.extract_clan("[DR] Hunk")
         self.assertEqual(tag, "DR")
         self.assertEqual(clean, "Hunk")
@@ -461,6 +534,7 @@ MaV130H0"""
 
     def test_elo_converter_and_win_probability(self):
         from shinri_ranker.analytics import EloConverter
+
         self.assertEqual(EloConverter.rating_to_elo(1.0), 800)
         self.assertEqual(EloConverter.rating_to_elo(5.0), 2200)
         self.assertEqual(EloConverter.rating_to_elo(3.0), 1500)
@@ -477,9 +551,8 @@ MaV130H0"""
 
     def test_tournament_generator(self):
         from shinri_ranker.analytics import TournamentGenerator
-        players = [
-            {"name": f"P{i}", "avg_rating": 5.0 - (i * 0.2)} for i in range(1, 9)
-        ]
+
+        players = [{"name": f"P{i}", "avg_rating": 5.0 - (i * 0.2)} for i in range(1, 9)]
         # 1. Single Elimination
         bracket = TournamentGenerator.generate_bracket(players, format_type="single_elimination")
         self.assertEqual(bracket["bracket_size"], 8)
@@ -498,8 +571,12 @@ MaV130H0"""
 
     def test_sentiment_analyzer(self):
         from shinri_ranker.analytics import SentimentAnalyzer
+
         good_reviews = [
-            {"text": "Отличный игрок, логика и детектив на высшем уровне, скилл супер!", "rating": 5},
+            {
+                "text": "Отличный игрок, логика и детектив на высшем уровне, скилл супер!",
+                "rating": 5,
+            },
             {"text": "Приятно играть, всегда помогает и тащит.", "rating": 5},
         ]
         res_good = SentimentAnalyzer.analyze_reviews(good_reviews)
@@ -518,6 +595,7 @@ MaV130H0"""
 
     def test_player_card_generator(self):
         from shinri_ranker.analytics import PlayerCardGenerator
+
         legend = {"name": "[PRO] Hunk", "player_id": 3865, "avg_rating": 5.0, "reviews_count": 50}
         card = PlayerCardGenerator.get_player_card(legend)
         self.assertEqual(card["title"], "Абсолютный Детектив")
@@ -533,6 +611,7 @@ MaV130H0"""
 
     def test_optimized_fuzzy_matcher(self):
         from shinri_ranker.fuzzy import FuzzyMatcher
+
         matcher = FuzzyMatcher(self.client)
         # Exact match O(1)
         res, ratio = matcher.find_best_match("Hunk")
@@ -551,7 +630,13 @@ class TestSixteenPlayerMatchEvaluator(unittest.TestCase):
     def setUp(self):
         # Create 16 mock player profiles in database
         self.mock_ratings = [
-            {"playerId": 100 + i, "playerName": f"Player_{i:02d}", "count": 10 + i * 5, "avg": round(1.0 + (i * 0.25), 2), "last": 1000}
+            {
+                "playerId": 100 + i,
+                "playerName": f"Player_{i:02d}",
+                "count": 10 + i * 5,
+                "avg": round(1.0 + (i * 0.25), 2),
+                "last": 1000,
+            }
             for i in range(1, 17)
         ]
         self.client = ShinriClient(offline_mode=True)
@@ -584,7 +669,9 @@ class TestSixteenPlayerMatchEvaluator(unittest.TestCase):
         self.assertEqual(report.match_players[-1].rank, 16)
 
         # 2. Worst to Best (Ascending)
-        worst_first = Ranker.sort_match_players(report.match_players, sort_order="asc", ranking_mode="bayesian")
+        worst_first = Ranker.sort_match_players(
+            report.match_players, sort_order="asc", ranking_mode="bayesian"
+        )
         self.assertEqual(len(worst_first), 16)
 
         ranks_asc = [p.rank for p in worst_first]
@@ -600,17 +687,28 @@ class TestSixteenPlayerMatchEvaluator(unittest.TestCase):
     def test_16_players_with_unrated_and_missing_profiles(self):
         # 14 rated players + 1 unrated (Alex, 0 reviews) + 1 missing (GhostPlayer)
         mock_data = [
-            {"playerId": 200 + i, "playerName": f"Rated_{i:02d}", "count": 20, "avg": round(2.0 + (i * 0.2), 2), "last": 1000}
+            {
+                "playerId": 200 + i,
+                "playerName": f"Rated_{i:02d}",
+                "count": 20,
+                "avg": round(2.0 + (i * 0.2), 2),
+                "last": 1000,
+            }
             for i in range(1, 15)
         ]
         # Alex with 0 reviews
-        mock_data.append({"playerId": 999, "playerName": "AlexUnrated", "count": 0, "avg": 0.0, "last": 1000})
+        mock_data.append(
+            {"playerId": 999, "playerName": "AlexUnrated", "count": 0, "avg": 0.0, "last": 1000}
+        )
 
         client = ShinriClient(offline_mode=True)
         client._populate_indexes(mock_data)
 
         # 16 inputs
-        input_lines = [f"Rated_{i:02d}" for i in range(1, 15)] + ["AlexUnrated", "GhostPlayerNotFound"]
+        input_lines = [f"Rated_{i:02d}" for i in range(1, 15)] + [
+            "AlexUnrated",
+            "GhostPlayerNotFound",
+        ]
         self.assertEqual(len(input_lines), 16)
 
         items = [InputParser.parse_line(l, idx) for idx, l in enumerate(input_lines, 1)]
@@ -640,7 +738,9 @@ class TestSixteenPlayerMatchEvaluator(unittest.TestCase):
         self.assertIsNone(unrated_player.avg_rating)
 
         # Test ascending sort with gaps
-        asc_list = Ranker.sort_match_players(report.match_players, sort_order="asc", ranking_mode="bayesian")
+        asc_list = Ranker.sort_match_players(
+            report.match_players, sort_order="asc", ranking_mode="bayesian"
+        )
         self.assertEqual(len(asc_list), 16)
         # All 16 participants must remain present and numbered 1..16
         self.assertEqual([p.rank for p in asc_list], list(range(1, 17)))
@@ -671,7 +771,9 @@ class TestSixteenPlayerMatchEvaluator(unittest.TestCase):
         self.assertEqual(report_desc.match_players[-1].name, "Player_01")
 
         # Ascending (classic)
-        asc_list = Ranker.sort_match_players(report_desc.match_players, sort_order="asc", ranking_mode="classic")
+        asc_list = Ranker.sort_match_players(
+            report_desc.match_players, sort_order="asc", ranking_mode="classic"
+        )
         self.assertEqual(asc_list[0].name, "Player_01")
         self.assertEqual(asc_list[-1].name, "Player_16")
 
@@ -695,15 +797,17 @@ class TestSixteenPlayerMatchEvaluator(unittest.TestCase):
 class TestOcrProcessor(unittest.TestCase):
     def setUp(self):
         from shinri_ranker.ocr import OcrProcessor
+
         self.ocr = OcrProcessor
         self.client = ShinriClient(offline_mode=True)
-        self.client._by_name_lower = {
-            "hunk": [{"name": "Hunk", "id": 3865, "avg": 4.88, "count": 97, "avatarGameId": "hunk_1"}],
-            "mercyflower^-^": [{"name": "mercyflower^-^", "id": 37725, "avg": 5.0, "count": 62, "avatarGameId": "mercy_1"}],
-            "fallenangel": [{"name": "FallenAngel", "id": 36666, "avg": 5.0, "count": 45, "avatarGameId": "angel_1"}],
-            "baobabback": [{"name": "BaobabBack", "id": 7292, "avg": 5.0, "count": 44, "avatarGameId": "bao_1"}],
-        }
-        self.client._is_loaded = True
+        self.client._populate_indexes(
+            [
+                {"playerId": 3865, "playerName": "Hunk", "avg": 4.88, "count": 97},
+                {"playerId": 37725, "playerName": "mercyflower^-^", "avg": 5.0, "count": 62},
+                {"playerId": 36666, "playerName": "FallenAngel", "avg": 5.0, "count": 45},
+                {"playerId": 7292, "playerName": "BaobabBack", "avg": 5.0, "count": 44},
+            ]
+        )
 
     def test_clean_ocr_token_patterns(self):
         self.assertEqual(self.ocr.clean_ocr_token("1. Hunk (Host) 5.00"), "Hunk")
@@ -766,9 +870,12 @@ class TestOcrProcessor(unittest.TestCase):
 
     def test_short_query_fuzzy_protection(self):
         from shinri_ranker.fuzzy import FuzzyMatcher
+
         mock_client = ShinriClient(offline_mode=True)
         mock_client._ratings = [{"playerId": 43281, "playerName": "Monody"}]
-        mock_client._by_name_lower = {"monody": [{"name": "Monody", "id": 43281, "avg": 5.0, "count": 1}]}
+        mock_client._by_name_lower = {
+            "monody": [{"name": "Monody", "id": 43281, "avg": 5.0, "count": 1}]
+        }
         fuzzy = FuzzyMatcher(mock_client)
         # Mood should NOT mutate into Monody despite high character overlap
         res = fuzzy.find_best_match("Mood", cutoff=0.72)
@@ -784,6 +891,7 @@ class TestOcrProcessor(unittest.TestCase):
 
     def test_extract_cards_grid_geometry(self):
         from PIL import Image
+
         # A square image or portrait image is not a DRO card strip/grid
         img_square = Image.new("RGB", (200, 200), color="black")
         res_square = self.ocr.extract_cards_grid(img_square, self.client)
@@ -796,9 +904,10 @@ class TestOcrProcessor(unittest.TestCase):
     def test_extract_cards_grid_16_players(self):
         import os
         from PIL import Image
-        img_path = r"C:\Users\mdeni\.gemini\antigravity\brain\5fa64bc0-0719-4068-97dd-a42e136360fa\.user_uploaded\media_1790934713010.png"
+
+        img_path = os.environ.get("SHINRI_OCR_FIXTURE", "")
         if not os.path.exists(img_path):
-            self.skipTest("Screenshot media_1790934713010.png not found")
+            self.skipTest("Set SHINRI_OCR_FIXTURE to a real screenshot for the Windows OCR check")
         real_client = ShinriClient()
         real_client.load_ratings()
         img = Image.open(img_path)
@@ -816,13 +925,12 @@ class TestOcrProcessor(unittest.TestCase):
         self.assertIn("Danov", names)
         self.assertIn("ябитнулгриф", names)
 
-
     def test_binary_marshal_cache(self):
         temp_dir = tempfile.mkdtemp()
         json_path = os.path.join(temp_dir, "test_cache.json")
         data = {
             "timestamp": 123456789,
-            "ratings": [{"playerId": 1, "playerName": "TestPlayer", "count": 5, "avg": 4.5}]
+            "ratings": [{"playerId": 1, "playerName": "TestPlayer", "count": 5, "avg": 4.5}],
         }
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -841,5 +949,3 @@ class TestOcrProcessor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

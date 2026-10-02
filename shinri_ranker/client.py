@@ -7,7 +7,12 @@ detailed reviews, avatar mappings, and nick history.
 from __future__ import annotations
 import json
 import logging
-import marshal
+import gzip
+import hashlib
+import math
+import threading
+from contextlib import contextmanager
+from .cache import TTLCache, atomic_write, synchronized
 import os
 import sys
 import re
@@ -198,6 +203,12 @@ class ShinriClient:
         timeout: int = 15,
         delay_between_requests: float = 0.15,
     ):
+        self._load_lock = threading.RLock()
+        self._index_lock = threading.RLock()
+        self._throttle_lock = threading.Lock()
+        self._request_context = threading.local()
+        self._initialized = False
+        self._generation = 0
         self.cache_path = cache_path or self.DEFAULT_CACHE_FILE
         self.cache_ttl_seconds = cache_ttl_seconds
         self.offline_mode = offline_mode
@@ -213,14 +224,14 @@ class ShinriClient:
         self._loaded_at: Optional[float] = None
         self._data_source: str = "none"
         self._global_avg_rating: float = 4.80  # Baseline prior for Bayesian formula
-        self._reviews_detail_cache: Dict[int, Dict[str, Any]] = {}
+        self._reviews_detail_cache = TTLCache(ttl=300)
         self._sorted_names_by_length: List[str] = []
 
         # Session lookups and negative caching to eliminate redundant network queries
-        self._online_name_cache: Dict[str, Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]] = {}
-        self._online_id_cache: Dict[int, Optional[Dict[str, Any]]] = {}
-        self._negative_name_cache: Set[str] = set()
-        self._negative_id_cache: Set[int] = set()
+        self._online_name_cache = TTLCache(ttl=300)
+        self._online_id_cache = TTLCache(ttl=300)
+        self._negative_name_cache = TTLCache(ttl=60)
+        self._negative_id_cache = TTLCache(ttl=60)
 
         self._headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -232,7 +243,7 @@ class ShinriClient:
 
     @property
     def is_loaded(self) -> bool:
-        return len(self._ratings) > 0
+        return self._initialized or bool(self._ratings)
 
     @property
     def data_source(self) -> str:
@@ -254,11 +265,31 @@ class ShinriClient:
         clean_id = avatar_game_id.strip().lower()
         return AVATAR_CDN_MAP.get(clean_id, DEFAULT_AVATAR_URL)
 
-    def _throttle(self) -> None:
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.delay_between_requests:
-            time.sleep(self.delay_between_requests - elapsed)
-        self.last_request_time = time.time()
+    def _throttle(self):
+        with self._throttle_lock:
+            remaining = self.delay_between_requests - (time.monotonic() - self.last_request_time)
+            if remaining > 0:
+                self._check_deadline(remaining)
+                time.sleep(remaining)
+            self.last_request_time = time.monotonic()
+
+    def _check_deadline(self, delay=0.0):
+        deadline = getattr(self._request_context, "deadline", None)
+        if deadline is None:
+            return self.timeout
+        remaining = deadline - time.monotonic() - delay
+        if remaining <= 0:
+            raise ShinriNetworkError("Истёк срок ожидания сетевой операции")
+        return min(self.timeout, remaining)
+
+    @contextmanager
+    def lookup_deadline(self, deadline):
+        previous = getattr(self._request_context, "deadline", None)
+        self._request_context.deadline = deadline
+        try:
+            yield
+        finally:
+            self._request_context.deadline = previous
 
     def _http_get_json(self, url: str, max_retries: int = 3) -> Any:
         if self.offline_mode:
@@ -266,15 +297,15 @@ class ShinriClient:
                 f"Клиент находится в автономном (оффлайн) режиме. Сетевой запрос к {url} отклонен."
             )
 
-        self._throttle()
         attempt = 0
         last_err = None
 
         while attempt < max_retries:
             attempt += 1
             try:
+                self._throttle()
                 req = urllib.request.Request(url, headers=self._headers)
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                with urllib.request.urlopen(req, timeout=self._check_deadline()) as resp:
                     if resp.status == 204:
                         return None
                     data = resp.read().decode("utf-8", errors="replace")
@@ -284,18 +315,25 @@ class ShinriClient:
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     return None
+                if 400 <= e.code < 500 and e.code not in (408, 429):
+                    raise ShinriNetworkError(f"HTTP {e.code}: запрос отклонён") from e
                 last_err = e
+            except (json.JSONDecodeError, UnicodeError) as e:
+                raise ShinriNetworkError("API вернул некорректный JSON") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last_err = e
 
             if attempt < max_retries:
-                time.sleep(0.8 * (2 ** (attempt - 1)))
+                delay = 0.8 * (2 ** (attempt - 1))
+                self._check_deadline(delay)
+                time.sleep(delay)
 
         raise ShinriNetworkError(
             f"Не удалось подключиться к shinrireviews.com после {max_retries} попыток. "
             f"Причина: {last_err}."
         )
 
+    @synchronized("_load_lock")
     def load_ratings(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         now = time.time()
 
@@ -306,7 +344,9 @@ class ShinriClient:
         cached_data = self._read_cache_file()
         if cached_data is not None:
             cached_time = cached_data.get("timestamp", 0)
-            if not force_refresh and (self.offline_mode or (now - cached_time) < self.cache_ttl_seconds):
+            if not force_refresh and (
+                self.offline_mode or (now - cached_time) < self.cache_ttl_seconds
+            ):
                 self._populate_indexes(cached_data.get("ratings", []))
                 self._loaded_at = cached_time
                 self._data_source = "cache"
@@ -329,36 +369,20 @@ class ShinriClient:
             if not isinstance(data, list):
                 raise ShinriNetworkError(f"Неожиданный формат ответа от /ratings: {type(data)}")
 
-            # Also fetch and merge all registered players from /rapi/players (~50k registered DRO players)
-            try:
-                players_data = self._http_get_json(f"{self.API_URL}/players")
-                if isinstance(players_data, list):
-                    rated_ids = {int(r.get("playerId", 0)) for r in data}
-                    for item in players_data:
-                        if isinstance(item, list) and len(item) >= 2:
-                            pid = int(item[0])
-                            if pid not in rated_ids:
-                                pname = str(item[1]).strip()
-                                avatar = str(item[4]).strip() if len(item) > 4 and item[4] else None
-                                data.append({
-                                    "playerId": pid,
-                                    "playerName": pname,
-                                    "avg": 0.0,
-                                    "count": 0,
-                                    "avatarGameId": avatar,
-                                })
-                                rated_ids.add(pid)
-            except Exception as e:
-                logger.warning("Не удалось объединить /players при обновлении: %s", e)
-
+            data = self._merge_player_directory(data)
             self._populate_indexes(data)
             self._loaded_at = now
             self._data_source = "network"
-            self._write_cache_file(data)
+            try:
+                self._write_cache_file(data)
+            except OSError as exc:
+                logger.warning("База загружена, но кэш не сохранён: %s", exc)
             return self._ratings
 
         except ShinriNetworkError as e:
-            logger.warning("Сетевой запрос не удался (%s). Попытка использовать резервный кэш...", e)
+            logger.warning(
+                "Сетевой запрос не удался (%s). Попытка использовать резервный кэш...", e
+            )
             cached_data = self._read_cache_file()
             if cached_data is not None:
                 self._populate_indexes(cached_data.get("ratings", []))
@@ -367,106 +391,196 @@ class ShinriClient:
                 return self._ratings
             raise
 
-    def _populate_indexes(self, ratings_list: List[Dict[str, Any]]) -> None:
-        self._ratings = ratings_list
-        self._by_id.clear()
-        self._by_name_exact.clear()
-        self._by_name_lower.clear()
-
-        total_score = 0.0
-        valid_scores_count = 0
-
+    @staticmethod
+    def validate_ratings(ratings_list):
+        if not isinstance(ratings_list, list) or len(ratings_list) > 200000:
+            raise ValueError("Ожидается список, не более 200000 игроков")
+        normalized = []
+        seen = set()
         for r in ratings_list:
+            if not isinstance(r, dict):
+                raise ValueError("Запись игрока должна быть объектом")
             pid = int(r.get("playerId", 0))
             name = str(r.get("playerName", "")).strip()
-            avatar_id = r.get("avatarGameId")
-            avg_score = float(r.get("avg", 0.0))
+            avg, count = float(r.get("avg", 0)), int(r.get("count", 0))
+            if pid <= 0 or pid in seen or not name or len(name) > 256:
+                raise ValueError("Некорректный или повторяющийся ID / пустое имя")
+            if (
+                count < 0
+                or not math.isfinite(avg)
+                or (count > 0 and not 1 <= avg <= 5)
+                or (count == 0 and avg != 0)
+            ):
+                raise ValueError(f"Некорректный рейтинг игрока {pid}")
+            seen.add(pid)
+            normalized.append(dict(r, playerId=pid, playerName=name, avg=avg, count=count))
+        return normalized
 
-            if avg_score > 0:
-                total_score += avg_score
-                valid_scores_count += 1
-
+    def _populate_indexes(self, ratings_list):
+        ratings = self.validate_ratings(ratings_list)
+        by_id, by_exact, by_lower = {}, {}, {}
+        scores = []
+        for r in ratings:
+            pid, name = r["playerId"], r["playerName"]
             record = {
                 "id": pid,
                 "name": name,
-                "avg": avg_score,
-                "count": int(r.get("count", 0)),
+                "avg": r["avg"],
+                "count": r["count"],
                 "last": r.get("last"),
-                "avatarGameId": avatar_id,
-                "avatar_url": self.get_avatar_url(avatar_id),
+                "avatarGameId": r.get("avatarGameId"),
+                "avatar_url": self.get_avatar_url(r.get("avatarGameId")),
                 "profile_url": f"{self.BASE_URL}/p/{pid}",
             }
+            by_id[pid] = record
+            by_exact.setdefault(name, []).append(record)
+            by_lower.setdefault(name.lower(), []).append(record)
+            if r["count"] > 0:
+                scores.append(r["avg"])
+        with self._index_lock:
+            self._by_id, self._by_name_exact, self._by_name_lower = by_id, by_exact, by_lower
+            self._global_avg_rating = round(sum(scores) / len(scores), 3) if scores else 4.80
+            self._sorted_names_by_length = sorted(by_lower, key=len, reverse=True)
+            self._ratings = ratings
+            self._generation += 1
+            self._initialized = True
+            for cache in (
+                self._online_name_cache,
+                self._online_id_cache,
+                self._negative_name_cache,
+                self._negative_id_cache,
+                self._reviews_detail_cache,
+            ):
+                cache.clear()
 
-            self._by_id[pid] = record
+    def _merge_player_directory(self, ratings):
+        # Keep known profiles if the directory service is temporarily unavailable.
+        indexed = {int(r["playerId"]): dict(r) for r in self.validate_ratings(ratings)}
+        try:
+            players = self._http_get_json(f"{self.API_URL}/players")
+            if not isinstance(players, list):
+                raise ShinriNetworkError("Некорректный каталог игроков")
+            directory = []
+            for item in players:
+                if isinstance(item, list) and len(item) >= 2:
+                    directory.append(
+                        {
+                            "playerId": int(item[0]),
+                            "playerName": str(item[1]),
+                            "avatarGameId": item[4] if len(item) > 4 else None,
+                            "avg": 0.0,
+                            "count": 0,
+                        }
+                    )
+                elif isinstance(item, dict):
+                    directory.append(
+                        {
+                            "playerId": int(item["id"]),
+                            "playerName": str(item["name"]),
+                            "avatarGameId": item.get("avatarGameId"),
+                            "avg": 0.0,
+                            "count": 0,
+                        }
+                    )
+            directory = self.validate_ratings(directory)
+        except (ShinriNetworkError, ValueError, TypeError, KeyError) as exc:
+            logger.warning("Каталог игроков недоступен, сохранён предыдущий: %s", exc)
+            directory = [dict(r, avg=0.0, count=0) for r in self._ratings]
+        for r in directory:
+            pid = r["playerId"]
+            if pid in indexed:
+                indexed[pid]["playerName"] = r["playerName"]
+                indexed[pid]["avatarGameId"] = r.get("avatarGameId")
+            else:
+                indexed[pid] = r
+        return list(indexed.values())
 
-            if name:
-                self._by_name_exact.setdefault(name, []).append(record)
-                self._by_name_lower.setdefault(name.lower(), []).append(record)
-
-        if valid_scores_count > 0:
-            self._global_avg_rating = round(total_score / valid_scores_count, 3)
-
-        self._sorted_names_by_length = sorted(self._by_name_lower.keys(), key=lambda x: -len(x))
-
-    def _read_cache_file(self) -> Optional[Dict[str, Any]]:
+    def _read_cache_file(self):
         candidates = [self.cache_path]
         if getattr(sys, "frozen", False):
-            exe_dir = os.path.dirname(sys.executable)
-            candidates.insert(0, os.path.join(exe_dir, os.path.basename(self.cache_path)))
-            meipass = getattr(sys, "_MEIPASS", None)
-            if meipass:
-                candidates.append(os.path.join(meipass, os.path.basename(self.cache_path)))
-
-        for p in candidates:
-            # Ultra-fast path: read pre-compiled binary cache if available and up-to-date
-            p_bin = p + ".dat"
-            if os.path.exists(p_bin) and os.path.exists(p):
-                try:
-                    if os.path.getmtime(p_bin) >= os.path.getmtime(p):
-                        with open(p_bin, "rb") as bf:
-                            return marshal.load(bf)
-                except Exception:
-                    pass
-
-            if os.path.exists(p):
-                try:
-                    with open(p, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    # Automatically generate binary cache for instant subsequent launches
-                    try:
-                        with open(p_bin, "wb") as bf:
-                            marshal.dump(data, bf)
-                    except Exception:
-                        pass
-                    return data
-                except Exception:
+            candidates.insert(
+                0, os.path.join(os.path.dirname(sys.executable), os.path.basename(self.cache_path))
+            )
+            if getattr(sys, "_MEIPASS", None):
+                candidates.append(os.path.join(sys._MEIPASS, os.path.basename(self.cache_path)))
+        for path in candidates:
+            try:
+                if os.path.getsize(path) > 64 * 1024 * 1024:
                     continue
+                with open(path, "rb") as stream:
+                    raw = stream.read()
+                digest = hashlib.sha256(raw).hexdigest().encode("ascii")
+                binary = path + ".dat"
+                data = None
+                used_binary = False
+                try:
+                    with open(binary, "rb") as stream:
+                        header = stream.read(73)
+                        if header == b"SHINRI1\n" + digest + b"\n":
+                            with gzip.GzipFile(fileobj=stream) as archive:
+                                compact = archive.read(64 * 1024 * 1024 + 1)
+                            if len(compact) <= 64 * 1024 * 1024:
+                                data = json.loads(compact)
+                                used_binary = True
+                except (OSError, ValueError, EOFError):
+                    pass
+                if data is None:
+                    data = json.loads(raw)
+                if not isinstance(data, dict):
+                    raise ValueError("Некорректный кэш")
+                self.validate_ratings(data.get("ratings"))
+                timestamp = float(data.get("timestamp", 0))
+                if not math.isfinite(timestamp):
+                    raise ValueError("Некорректное время кэша")
+                try:
+                    if not used_binary:
+                        compact = json.dumps(data, ensure_ascii=False).encode("utf-8")
+                        atomic_write(binary, b"SHINRI1\n" + digest + b"\n" + gzip.compress(compact))
+                except OSError:
+                    pass  # Read-only portable installs remain usable.
+                return data
+            except (OSError, ValueError, TypeError, KeyError, OverflowError) as exc:
+                logger.debug("Пропускаем повреждённый кэш %s: %s", path, exc)
         return None
 
-    def _write_cache_file(self, ratings: List[Dict[str, Any]]) -> None:
-        target_path = self.cache_path
-        if getattr(sys, "frozen", False) and target_path == self.DEFAULT_CACHE_FILE:
-            target_path = os.path.join(os.path.dirname(sys.executable), self.DEFAULT_CACHE_FILE)
+    def _write_cache_file(self, ratings):
+        ratings = self.validate_ratings(ratings)
+        path = self.cache_path
+        if getattr(sys, "frozen", False) and path == self.DEFAULT_CACHE_FILE:
+            path = os.path.join(os.path.dirname(sys.executable), path)
+        obj = {
+            "schema_version": 1,
+            "timestamp": time.time(),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "source": self.BASE_URL,
+            "count": len(ratings),
+            "ratings": ratings,
+        }
+        raw = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
+        atomic_write(path, raw)
         try:
-            cache_obj = {
-                "timestamp": time.time(),
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "source": self.BASE_URL,
-                "count": len(ratings),
-                "ratings": ratings,
-            }
-            with open(target_path, "w", encoding="utf-8") as f:
-                json.dump(cache_obj, f, ensure_ascii=False, indent=2)
-            try:
-                with open(target_path + ".dat", "wb") as bf:
-                    marshal.dump(cache_obj, bf)
-            except Exception:
-                pass
-        except Exception:
-            pass
+            digest = hashlib.sha256(raw).hexdigest().encode("ascii")
+            atomic_write(
+                path + ".dat",
+                b"SHINRI1\n"
+                + digest
+                + b"\n"
+                + gzip.compress(json.dumps(obj, ensure_ascii=False).encode("utf-8")),
+            )
+        except OSError as exc:
+            logger.debug("Вторичный кэш не записан: %s", exc)
+
+    @synchronized("_load_lock")
+    def import_ratings(self, ratings):
+        ratings = self.validate_ratings(ratings)
+        self._write_cache_file(ratings)
+        self._populate_indexes(ratings)
+        self._loaded_at = time.time()
+        self._data_source = "imported_file"
+        return len(ratings)
 
     def export_cache(self, output_path: str) -> None:
-        if not self._ratings:
+        if not self.is_loaded:
             self.load_ratings()
         data = {
             "timestamp": time.time(),
@@ -478,24 +592,18 @@ class ShinriClient:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-    def import_cache(self, input_path: str) -> int:
-        with open(input_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        ratings = data.get("ratings") if isinstance(data, dict) else data
-        if not isinstance(ratings, list):
-            raise ValueError("Некорректный формат: ожидается список игроков или объект с 'ratings'")
-        self._populate_indexes(ratings)
-        self._loaded_at = time.time()
-        self._data_source = "imported_file"
-        self._write_cache_file(ratings)
-        return len(ratings)
+    def import_cache(self, input_path):
+        with open(input_path, "r", encoding="utf-8") as stream:
+            data = json.load(stream)
+        return self.import_ratings(data.get("ratings") if isinstance(data, dict) else data)
 
     # ---------------- Lookups ----------------
 
     def find_by_id(self, player_id: int) -> Optional[Dict[str, Any]]:
-        if not self._ratings:
+        if not self.is_loaded:
             self.load_ratings()
-        return self._by_id.get(player_id)
+        with self._index_lock:
+            return self._by_id.get(player_id)
 
     def find_by_name(self, name: str) -> List[Dict[str, Any]]:
         if not self._ratings:
@@ -515,8 +623,9 @@ class ShinriClient:
         if self.offline_mode or player_id in self._negative_id_cache:
             return None
 
-        if player_id in self._online_id_cache:
-            return self._online_id_cache[player_id]
+        cached = self._online_id_cache.get(player_id)
+        if cached is not None:
+            return cached
 
         player_data = self._http_get_json(f"{self.API_URL}/players/{player_id}")
         if not player_data:
@@ -531,8 +640,8 @@ class ShinriClient:
                 if s:
                     stats["count"] = int(s.get("count", 0))
                     stats["avg"] = float(s.get("avg", 0.0))
-        except Exception:
-            pass
+        except ShinriNetworkError:
+            raise
 
         avatar_id = player_data.get("avatarGameId")
         res = {
@@ -548,7 +657,9 @@ class ShinriClient:
         self._online_id_cache[player_id] = res
         return res
 
-    def fetch_player_online_by_name(self, name: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    def fetch_player_online_by_name(
+        self, name: str
+    ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
         if self.offline_mode:
             return None, []
 
@@ -557,8 +668,9 @@ class ShinriClient:
         if name_lower in self._negative_name_cache:
             return None, []
 
-        if name_lower in self._online_name_cache:
-            return self._online_name_cache[name_lower]
+        cached = self._online_name_cache.get(name_lower)
+        if cached is not None:
+            return cached
 
         quoted_name = urllib.parse.quote(name)
 
@@ -589,8 +701,8 @@ class ShinriClient:
                 self._online_name_cache[name_lower] = (res, [])
                 self._online_id_cache[pid] = res
                 return res, []
-        except Exception:
-            pass
+        except ShinriNetworkError:
+            raise
 
         # 2. Try search endpoint
         try:
@@ -622,8 +734,8 @@ class ShinriClient:
                 if candidates:
                     self._online_name_cache[name_lower] = (None, candidates)
                     return None, candidates
-        except Exception:
-            pass
+        except ShinriNetworkError:
+            raise
 
         self._negative_name_cache.add(name_lower)
         return None, []
@@ -645,11 +757,14 @@ class ShinriClient:
         - Finds top liked review quote
         - Extracts prominent sentiment words
         """
-        if player_id in self._reviews_detail_cache:
-            return self._reviews_detail_cache[player_id]
+        cached = self._reviews_detail_cache.get(player_id)
+        if cached is not None:
+            return cached
 
         if self.offline_mode:
             return {
+                "available": False,
+                "message": "Отзывы недоступны в оффлайн-режиме",
                 "verified_avg": None,
                 "verified_count": 0,
                 "top_review": None,
@@ -680,7 +795,30 @@ class ShinriClient:
             latest_rev = None
 
             word_freq: Dict[str, int] = {}
-            stop_words = {"и", "в", "не", "на", "я", "с", "что", "а", "он", "по", "но", "как", "то", "все", "он", "его", "от", "за", "да", "ну", "это", "же"}
+            stop_words = {
+                "и",
+                "в",
+                "не",
+                "на",
+                "я",
+                "с",
+                "что",
+                "а",
+                "он",
+                "по",
+                "но",
+                "как",
+                "то",
+                "все",
+                "он",
+                "его",
+                "от",
+                "за",
+                "да",
+                "ну",
+                "это",
+                "же",
+            }
 
             for r in reviews:
                 score = float(r.get("rating", 0))
@@ -698,7 +836,9 @@ class ShinriClient:
                             "text": text,
                             "rating": score,
                             "likes": likes,
-                            "author": r.get("authorNickname") or r.get("authorGameName") or "Аноним",
+                            "author": r.get("authorNickname")
+                            or r.get("authorGameName")
+                            or "Аноним",
                             "verified": is_verified,
                         }
 
@@ -706,7 +846,9 @@ class ShinriClient:
                         latest_rev = {
                             "text": text,
                             "rating": score,
-                            "author": r.get("authorNickname") or r.get("authorGameName") or "Аноним",
+                            "author": r.get("authorNickname")
+                            or r.get("authorGameName")
+                            or "Аноним",
                         }
 
                     # Extract keywords
@@ -715,7 +857,9 @@ class ShinriClient:
                         if w not in stop_words:
                             word_freq[w] = word_freq.get(w, 0) + 1
 
-            verified_avg = round(sum(verified_scores) / len(verified_scores), 2) if verified_scores else None
+            verified_avg = (
+                round(sum(verified_scores) / len(verified_scores), 2) if verified_scores else None
+            )
 
             # Sort top tags & analyze sentiment
             sorted_tags = sorted(word_freq.items(), key=lambda x: -x[1])[:6]
@@ -724,6 +868,7 @@ class ShinriClient:
             sentiment_info = {}
             try:
                 from .analytics import SentimentAnalyzer
+
                 sentiment_info = SentimentAnalyzer.analyze_reviews(reviews)
                 if sentiment_info.get("tags"):
                     tags = list(dict.fromkeys(tags + sentiment_info["tags"]))[:8]
@@ -731,6 +876,16 @@ class ShinriClient:
                 pass
 
             res = {
+                "available": True,
+                "reviews": [
+                    {
+                        "author": r.get("authorNickname") or r.get("authorGameName") or "Аноним",
+                        "text": str(r.get("text") or ""),
+                        "rating": r.get("rating"),
+                        "verified": bool(r.get("authorVerified")),
+                    }
+                    for r in reviews[:100]
+                ],
                 "verified_avg": verified_avg,
                 "verified_count": len(verified_scores),
                 "top_review": top_rev,
@@ -745,8 +900,9 @@ class ShinriClient:
 
         except Exception as e:
             logger.warning("Ошибка получения деталей отзывов для игрока %d: %s", player_id, e)
-            return {}
+            return {"available": False, "message": "Отзывы временно недоступны"}
 
+    @synchronized("_load_lock")
     def refresh_delta(self, force_full: bool = False) -> Dict[str, Any]:
         """
         Smart delta sync:
@@ -765,6 +921,7 @@ class ShinriClient:
         if not isinstance(data, list):
             raise ShinriNetworkError(f"Неожиданный формат ответа от /ratings: {type(data)}")
 
+        data = self._merge_player_directory(data)
         old_map = {int(r.get("playerId", 0)): r for r in self._ratings}
         added_count = 0
         updated_count = 0
@@ -776,15 +933,18 @@ class ShinriClient:
                 added_count += 1
             else:
                 old_r = old_map[pid]
-                if old_r.get("count") != r.get("count") or old_r.get("avg") != r.get("avg"):
+                if any(
+                    old_r.get(k) != r.get(k)
+                    for k in ("count", "avg", "playerName", "avatarGameId", "last")
+                ):
                     updated_count += 1
                 else:
                     unchanged_count += 1
 
+        self._write_cache_file(data)
         self._populate_indexes(data)
         self._loaded_at = time.time()
         self._data_source = "network_delta"
-        self._write_cache_file(data)
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 
@@ -793,6 +953,7 @@ class ShinriClient:
             "added": added_count,
             "updated": updated_count,
             "unchanged": unchanged_count,
+            "removed": len(set(old_map) - {int(r["playerId"]) for r in data}),
             "total": len(data),
             "delta_time_ms": elapsed_ms,
         }

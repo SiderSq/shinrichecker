@@ -34,7 +34,9 @@ class RankedPlayer:
             "player_id": self.player_id,
             "name": self.name,
             "avg_rating": round(self.avg_rating, 2) if self.avg_rating is not None else None,
-            "bayesian_score": round(self.bayesian_score, 2) if self.bayesian_score is not None else None,
+            "bayesian_score": (
+                round(self.bayesian_score, 2) if self.bayesian_score is not None else None
+            ),
             "reviews_count": self.reviews_count,
             "profile_url": self.profile_url,
             "avatar_url": self.avatar_url,
@@ -64,6 +66,22 @@ class RankingReport:
     missing_players: List[PlayerResult]
     duplicates: List[PlayerResult]
     match_players: Optional[List[RankedPlayer]] = None
+
+    def analytics_roster(self):
+        """Resolved unique profiles, independent of presentation top-N."""
+        seen, players = set(), []
+        for p in self.match_players or []:
+            if p.status not in ("matched", "unrated") or not p.player_id or p.player_id in seen:
+                continue
+            seen.add(p.player_id)
+            data = p.to_dict()
+            if data["bayesian_score"] is None:
+                data["bayesian_score"] = self.global_avg
+            if data["avg_rating"] is None:
+                data["avg_rating"] = self.global_avg
+            data["rating_imputed"] = p.avg_rating is None
+            players.append(data)
+        return players
 
     def to_dict(self) -> Dict[str, Any]:
         unified = self.match_players if self.match_players is not None else self.best_players
@@ -101,12 +119,16 @@ class Ranker:
     """Computes player rankings with Bayesian formula and classic modes."""
 
     @staticmethod
-    def calculate_bayesian_score(avg: float, count: int, global_avg: float = 4.80, m: int = 5) -> float:
+    def calculate_bayesian_score(
+        avg: float, count: int, global_avg: float = 4.80, m: int = 5
+    ) -> float:
         """
         Bayesian Average calculation:
         R_bayes = (v * avg + m * global_avg) / (v + m)
         """
-        if count <= 0:
+        if count < 0 or m < 0 or not 1 <= global_avg <= 5 or not 0 <= avg <= 5:
+            raise ValueError("Некорректные параметры рейтинга")
+        if count == 0:
             return 0.0
         return (count * avg + m * global_avg) / (count + m)
 
@@ -120,6 +142,13 @@ class Ranker:
         global_avg: float = 4.80,
         m_confidence: int = 5,
     ) -> RankingReport:
+        if (
+            top_n < 1
+            or min_reviews < 0
+            or m_confidence < 0
+            or ranking_mode not in ("bayesian", "classic")
+        ):
+            raise ValueError("Некорректная конфигурация рейтинга")
         duplicates: List[PlayerResult] = []
         unrated_players: List[PlayerResult] = []
         ambiguous_players: List[PlayerResult] = []
@@ -278,15 +307,23 @@ class Ranker:
                     rank=rank_counter,
                     player_id=pid if pid > 0 else None,
                     name=p.name or p.input_text,
-                    avg_rating=p.avg_rating if (p.avg_rating and (p.reviews_count or 0) > 0) else None,
+                    avg_rating=(
+                        p.avg_rating if (p.avg_rating and (p.reviews_count or 0) > 0) else None
+                    ),
                     bayesian_score=None,
                     reviews_count=p.reviews_count or 0,
-                    profile_url=p.profile_url or (f"https://shinrireviews.com/p/{pid}" if pid else ""),
+                    profile_url=p.profile_url
+                    or (f"https://shinrireviews.com/p/{pid}" if pid else ""),
                     avatar_url=avatar_url,
                     original_input=p.input_text,
-                    note=p.resolution_note or "Нет отзывов (0 отзывов)",
+                    note=p.resolution_note
+                    or (
+                        f"Меньше {min_reviews} отзывов"
+                        if p.reviews_count
+                        else "Нет отзывов (0 отзывов)"
+                    ),
                     status="unrated",
-                    status_label="Нет оценок",
+                    status_label="Мало отзывов" if p.reviews_count else "Нет оценок",
                 )
             )
             rank_counter += 1
@@ -342,9 +379,14 @@ class Ranker:
                     bayesian_score=None,
                     reviews_count=p.reviews_count or 0,
                     profile_url=p.profile_url or "",
-                    avatar_url=p.avatar_url or "https://shinrireviews.com/assets/default-LZMr4ZDr.png",
+                    avatar_url=p.avatar_url
+                    or "https://shinrireviews.com/assets/default-LZMr4ZDr.png",
                     original_input=p.input_text,
-                    note=f"Повтор игрока (ID {p.duplicate_of_id})" if p.duplicate_of_id else "Повторяющаяся запись",
+                    note=(
+                        f"Повтор игрока (ID {p.duplicate_of_id})"
+                        if p.duplicate_of_id
+                        else "Повторяющаяся запись"
+                    ),
                     status="duplicate",
                     status_label="Дубликат",
                 )
@@ -451,4 +493,3 @@ class Ranker:
             )
             result.append(cloned)
         return result
-

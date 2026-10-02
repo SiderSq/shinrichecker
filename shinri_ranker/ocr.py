@@ -13,6 +13,13 @@ import logging
 import os
 import re
 import unicodedata
+import shutil
+import subprocess
+import threading
+import warnings
+import time
+from functools import wraps
+from PIL import ImageOps, UnidentifiedImageError
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image, ImageEnhance, ImageFilter
@@ -23,6 +30,27 @@ from .matcher import ChatLogExtractor
 
 logger = logging.getLogger("shinri_ocr")
 
+
+class OcrUnavailable(RuntimeError):
+    """No local OCR engine can recognize images on this installation."""
+
+
+_ENGINE_STATE = threading.local()
+
+
+def ocr_budget(function):
+    @wraps(function)
+    def run(*args, **kwargs):
+        previous = getattr(_ENGINE_STATE, "deadline", None)
+        _ENGINE_STATE.deadline = time.monotonic() + 25
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _ENGINE_STATE.deadline = previous
+
+    return run
+
+
 # Check if native Windows Media OCR is available
 HAS_WINRT_OCR = False
 try:
@@ -30,6 +58,7 @@ try:
     import winrt.windows.graphics.imaging as win_imaging
     import winrt.windows.storage.streams as win_streams
     import winrt.windows.globalization as win_glob
+
     HAS_WINRT_OCR = True
 except Exception:
     HAS_WINRT_OCR = False
@@ -41,81 +70,423 @@ _CACHED_ENGINES: Dict[Tuple[str, ...], Any] = {}
 # Canonical Danganronpa characters (DR1, SDR2, V3, UDG, Anime 3, and popular DRO skins)
 DANGANRONPA_CHARACTERS = {
     # Full names & single names (Russian & English)
-    "макото", "наэги", "наеги", "макотонаэги", "макотонаеги", "makoto", "naegi", "makotonaegi",
-    "кёко", "киригири", "кеко", "кёкокиригири", "кекокиригири", "kyoko", "kirigiri", "kyokokirigiri",
-    "бьякуя", "тогами", "бьякуятогами", "byakuya", "togami", "byakuyatogami",
-    "токо", "фукава", "геноцид", "убийцасё", "убийцасе", "убийца", "toko", "fukawa", "genocide",
-    "аой", "асахина", "aoi", "asahina",
-    "ясухиро", "хагакурэ", "хагакуре", "yasuhiro", "hagakure",
-    "саяка", "майзоно", "маизоно", "саякамайзоно", "sayaka", "maizono", "sayakamaizono",
-    "леон", "кувата", "леонкувата", "leon", "kuwata", "leonkuwata",
-    "чихиро", "фуджисаки", "chihiro", "fujisaki",
-    "мондо", "овада", "mondo", "owada",
-    "киётака", "ишимару", "киетака", "kiyotaka", "ishimaru",
-    "хифуми", "ямада", "hifumi", "yamada",
-    "селестия", "люденберг", "селеста", "celestia", "ludenberg",
-    "сакура", "огами", "sakura", "ogami",
-    "джунко", "эношима", "junko", "enoshima",
-    "мукуро", "икусаба", "мукуроикусаба", "mukuro", "ikusaba", "mukuroikusaba",
-    "хаджиме", "хината", "хадзиме", "hajime", "hinata", "hajimehinata",
-    "изуру", "камукура", "izuru", "kamukura",
-    "нагито", "комаэда", "комаеда", "nagito", "komaeda", "nagitokomaeda",
-    "чиаки", "нанами", "чиакинанами", "chiaki", "nanami", "chiakinanami",
-    "фуюхико", "кузурю", "кудзурю", "fuyuhiko", "kuzuryu",
-    "пеко", "пекояма", "peko", "pekoyama",
-    "микан", "цумики", "миканцумики", "mikan", "tsumiki", "mikantsumiki",
-    "ибуки", "миода", "ibuki", "mioda",
-    "хиёко", "сайонджи", "хийоко", "саёнджи", "саенджи", "hiyoko", "saionji",
-    "махиру", "коидзуми", "mahiru", "koizumi",
-    "гандхам", "танака", "gundham", "tanaka",
-    "казуичи", "сода", "соуда", "kazuichi", "soda", "souda",
-    "акане", "овари", "akane", "owari",
-    "некомару", "нидай", "nekomaru", "nidai",
-    "сония", "невермайнд", "невермай", "невермайн", "соня", "sonia", "nevermind", "sonianevermind",
-    "терутеру", "ханамура", "teruteru", "hanamura",
-    "шуичи", "саихара", "shuichi", "saihara", "shuichisaihara",
-    "каэде", "акамацу", "каеде", "kaede", "akamatsu", "kaedeakamatsu",
-    "кайто", "момота", "kaito", "momota", "kaitomomota",
-    "маки", "харукава", "maki", "harukawa", "makiharukawa",
-    "кокичи", "ома", "кокичиома", "kokichi", "oma", "kokichioma",
-    "химико", "юмено", "химикоюмено", "himiko", "yumeno", "himikoyumeno",
-    "рантаро", "амами", "рантароамами", "rantaro", "amami", "rantaroamami",
-    "миу", "ирума", "miu", "iruma", "miuiruma",
-    "гонта", "гокухара", "gonta", "gokuhara",
-    "киибо", "кибо", "к1-во", "к1-bo", "k1-b0", "k1bo", "kiibo", "keebo", "ю-во", "ю-30", "ю-80", "ki-bo", "юво", "к1во", "k1b0", "к1-в0",
-    "кируми", "тоджо", "тодзё", "kirumi", "tojo",
-    "рёма", "рема", "хоши", "ryoma", "hoshi",
-    "тенко", "чабашира", "tenko", "chabashira",
-    "корекиё", "корекие", "шингуджи", "шингудзи", "korekiyo", "shinguji",
-    "энджи", "ёнага", "енага", "angie", "yonaga",
-    "цумуги", "широгане", "tsumugi", "shirogane",
-    "монотаро", "монодам", "моносуке", "монокид", "монофани", "monokubs",
-    "комару", "komaru", "монокума", "monokuma", "мономи", "monomi", "усами", "usami",
-    "монака", "monaca", "нагиса", "nagisa", "котоко", "kotoko", "джатаро", "jataro", "масару", "masaru",
-    "семён", "семен", "semyon", "миквоин", "mikvoin", "крестер", "crester", "кагуя", "kaguya",
-    "чиса", "юкизомэ", "юкизоме", "chisa", "yukizome",
-    "кёсукэ", "кесуке", "мунаката", "kyosuke", "munakata",
-    "джузо", "сакакура", "juzo", "sakakura",
-    "рёта", "рета", "митараи", "ryota", "mitarai",
-    "сейко", "кимура", "seiko", "kimura",
-    "рурука", "андо", "ruruka", "ando",
-    "соносукэ", "соносуке", "изаёи", "изаеи", "sonosuke", "izayoi",
-    "гозу", "великийгозу", "greatgozu", "gozu",
-    "миая", "геккогахара", "miaya", "gekkogahara",
+    "макото",
+    "наэги",
+    "наеги",
+    "макотонаэги",
+    "макотонаеги",
+    "makoto",
+    "naegi",
+    "makotonaegi",
+    "кёко",
+    "киригири",
+    "кеко",
+    "кёкокиригири",
+    "кекокиригири",
+    "kyoko",
+    "kirigiri",
+    "kyokokirigiri",
+    "бьякуя",
+    "тогами",
+    "бьякуятогами",
+    "byakuya",
+    "togami",
+    "byakuyatogami",
+    "токо",
+    "фукава",
+    "геноцид",
+    "убийцасё",
+    "убийцасе",
+    "убийца",
+    "toko",
+    "fukawa",
+    "genocide",
+    "аой",
+    "асахина",
+    "aoi",
+    "asahina",
+    "ясухиро",
+    "хагакурэ",
+    "хагакуре",
+    "yasuhiro",
+    "hagakure",
+    "саяка",
+    "майзоно",
+    "маизоно",
+    "саякамайзоно",
+    "sayaka",
+    "maizono",
+    "sayakamaizono",
+    "леон",
+    "кувата",
+    "леонкувата",
+    "leon",
+    "kuwata",
+    "leonkuwata",
+    "чихиро",
+    "фуджисаки",
+    "chihiro",
+    "fujisaki",
+    "мондо",
+    "овада",
+    "mondo",
+    "owada",
+    "киётака",
+    "ишимару",
+    "киетака",
+    "kiyotaka",
+    "ishimaru",
+    "хифуми",
+    "ямада",
+    "hifumi",
+    "yamada",
+    "селестия",
+    "люденберг",
+    "селеста",
+    "celestia",
+    "ludenberg",
+    "сакура",
+    "огами",
+    "sakura",
+    "ogami",
+    "джунко",
+    "эношима",
+    "junko",
+    "enoshima",
+    "мукуро",
+    "икусаба",
+    "мукуроикусаба",
+    "mukuro",
+    "ikusaba",
+    "mukuroikusaba",
+    "хаджиме",
+    "хината",
+    "хадзиме",
+    "hajime",
+    "hinata",
+    "hajimehinata",
+    "изуру",
+    "камукура",
+    "izuru",
+    "kamukura",
+    "нагито",
+    "комаэда",
+    "комаеда",
+    "nagito",
+    "komaeda",
+    "nagitokomaeda",
+    "чиаки",
+    "нанами",
+    "чиакинанами",
+    "chiaki",
+    "nanami",
+    "chiakinanami",
+    "фуюхико",
+    "кузурю",
+    "кудзурю",
+    "fuyuhiko",
+    "kuzuryu",
+    "пеко",
+    "пекояма",
+    "peko",
+    "pekoyama",
+    "микан",
+    "цумики",
+    "миканцумики",
+    "mikan",
+    "tsumiki",
+    "mikantsumiki",
+    "ибуки",
+    "миода",
+    "ibuki",
+    "mioda",
+    "хиёко",
+    "сайонджи",
+    "хийоко",
+    "саёнджи",
+    "саенджи",
+    "hiyoko",
+    "saionji",
+    "махиру",
+    "коидзуми",
+    "mahiru",
+    "koizumi",
+    "гандхам",
+    "танака",
+    "gundham",
+    "tanaka",
+    "казуичи",
+    "сода",
+    "соуда",
+    "kazuichi",
+    "soda",
+    "souda",
+    "акане",
+    "овари",
+    "akane",
+    "owari",
+    "некомару",
+    "нидай",
+    "nekomaru",
+    "nidai",
+    "сония",
+    "невермайнд",
+    "невермай",
+    "невермайн",
+    "соня",
+    "sonia",
+    "nevermind",
+    "sonianevermind",
+    "терутеру",
+    "ханамура",
+    "teruteru",
+    "hanamura",
+    "шуичи",
+    "саихара",
+    "shuichi",
+    "saihara",
+    "shuichisaihara",
+    "каэде",
+    "акамацу",
+    "каеде",
+    "kaede",
+    "akamatsu",
+    "kaedeakamatsu",
+    "кайто",
+    "момота",
+    "kaito",
+    "momota",
+    "kaitomomota",
+    "маки",
+    "харукава",
+    "maki",
+    "harukawa",
+    "makiharukawa",
+    "кокичи",
+    "ома",
+    "кокичиома",
+    "kokichi",
+    "oma",
+    "kokichioma",
+    "химико",
+    "юмено",
+    "химикоюмено",
+    "himiko",
+    "yumeno",
+    "himikoyumeno",
+    "рантаро",
+    "амами",
+    "рантароамами",
+    "rantaro",
+    "amami",
+    "rantaroamami",
+    "миу",
+    "ирума",
+    "miu",
+    "iruma",
+    "miuiruma",
+    "гонта",
+    "гокухара",
+    "gonta",
+    "gokuhara",
+    "киибо",
+    "кибо",
+    "к1-во",
+    "к1-bo",
+    "k1-b0",
+    "k1bo",
+    "kiibo",
+    "keebo",
+    "ю-во",
+    "ю-30",
+    "ю-80",
+    "ki-bo",
+    "юво",
+    "к1во",
+    "k1b0",
+    "к1-в0",
+    "кируми",
+    "тоджо",
+    "тодзё",
+    "kirumi",
+    "tojo",
+    "рёма",
+    "рема",
+    "хоши",
+    "ryoma",
+    "hoshi",
+    "тенко",
+    "чабашира",
+    "tenko",
+    "chabashira",
+    "корекиё",
+    "корекие",
+    "шингуджи",
+    "шингудзи",
+    "korekiyo",
+    "shinguji",
+    "энджи",
+    "ёнага",
+    "енага",
+    "angie",
+    "yonaga",
+    "цумуги",
+    "широгане",
+    "tsumugi",
+    "shirogane",
+    "монотаро",
+    "монодам",
+    "моносуке",
+    "монокид",
+    "монофани",
+    "monokubs",
+    "комару",
+    "komaru",
+    "монокума",
+    "monokuma",
+    "мономи",
+    "monomi",
+    "усами",
+    "usami",
+    "монака",
+    "monaca",
+    "нагиса",
+    "nagisa",
+    "котоко",
+    "kotoko",
+    "джатаро",
+    "jataro",
+    "масару",
+    "masaru",
+    "семён",
+    "семен",
+    "semyon",
+    "миквоин",
+    "mikvoin",
+    "крестер",
+    "crester",
+    "кагуя",
+    "kaguya",
+    "чиса",
+    "юкизомэ",
+    "юкизоме",
+    "chisa",
+    "yukizome",
+    "кёсукэ",
+    "кесуке",
+    "мунаката",
+    "kyosuke",
+    "munakata",
+    "джузо",
+    "сакакура",
+    "juzo",
+    "sakakura",
+    "рёта",
+    "рета",
+    "митараи",
+    "ryota",
+    "mitarai",
+    "сейко",
+    "кимура",
+    "seiko",
+    "kimura",
+    "рурука",
+    "андо",
+    "ruruka",
+    "ando",
+    "соносукэ",
+    "соносуке",
+    "изаёи",
+    "изаеи",
+    "sonosuke",
+    "izayoi",
+    "гозу",
+    "великийгозу",
+    "greatgozu",
+    "gozu",
+    "миая",
+    "геккогахара",
+    "miaya",
+    "gekkogahara",
 }
 
 # Distinctive character surnames and identifying terms
 DANGANRONPA_SURNAMES = {
-    "ома", "невермайнд", "невермай", "невермайн", "кувата", "тогами", "амами", "юмено",
-    "икусаба", "нанами", "киригири", "наэги", "наеги", "цумики", "майзоно", "маизоно",
-    "асахина", "хагакурэ", "хагакуре", "фукава", "фуджисаки", "овада", "ишимару", "ямада",
-    "люденберг", "эношима", "хината", "комаэда", "комаеда", "кузурю", "кудзурю", "пекояма",
-    "миода", "сайонджи", "саёнджи", "коидзуми", "танака", "сода", "овари", "нидай", "ханамура",
-    "саихара", "акамацу", "момота", "харукава", "ирума", "гокухара", "тоджо", "хоши",
-    "чабашира", "шингуджи", "ёнага", "енага", "широгане", "монокума", "мономи", "усами",
-    "oma", "nevermind", "kuwata", "togami", "amami", "yumeno", "ikusaba", "nanami",
-    "kirigiri", "naegi", "tsumiki", "maizono", "komaeda", "enoshima", "fukawa", "hinata"
+    "ома",
+    "невермайнд",
+    "невермай",
+    "невермайн",
+    "кувата",
+    "тогами",
+    "амами",
+    "юмено",
+    "икусаба",
+    "нанами",
+    "киригири",
+    "наэги",
+    "наеги",
+    "цумики",
+    "майзоно",
+    "маизоно",
+    "асахина",
+    "хагакурэ",
+    "хагакуре",
+    "фукава",
+    "фуджисаки",
+    "овада",
+    "ишимару",
+    "ямада",
+    "люденберг",
+    "эношима",
+    "хината",
+    "комаэда",
+    "комаеда",
+    "кузурю",
+    "кудзурю",
+    "пекояма",
+    "миода",
+    "сайонджи",
+    "саёнджи",
+    "коидзуми",
+    "танака",
+    "сода",
+    "овари",
+    "нидай",
+    "ханамура",
+    "саихара",
+    "акамацу",
+    "момота",
+    "харукава",
+    "ирума",
+    "гокухара",
+    "тоджо",
+    "хоши",
+    "чабашира",
+    "шингуджи",
+    "ёнага",
+    "енага",
+    "широгане",
+    "монокума",
+    "мономи",
+    "усами",
+    "oma",
+    "nevermind",
+    "kuwata",
+    "togami",
+    "amami",
+    "yumeno",
+    "ikusaba",
+    "nanami",
+    "kirigiri",
+    "naegi",
+    "tsumiki",
+    "maizono",
+    "komaeda",
+    "enoshima",
+    "fukawa",
+    "hinata",
 }
+
 
 def _normalize_name_token(s: str) -> str:
     if not s:
@@ -127,39 +498,133 @@ def _normalize_name_token(s: str) -> str:
     return re.sub(r"[^\w]", "", s)
 
 
-_CHARACTERS_NORMALIZED = {_normalize_name_token(c) for c in DANGANRONPA_CHARACTERS if _normalize_name_token(c)}
-_SURNAMES_NORMALIZED = {_normalize_name_token(s) for s in DANGANRONPA_SURNAMES if _normalize_name_token(s)}
+_CHARACTERS_NORMALIZED = {
+    _normalize_name_token(c) for c in DANGANRONPA_CHARACTERS if _normalize_name_token(c)
+}
+_SURNAMES_NORMALIZED = {
+    _normalize_name_token(s) for s in DANGANRONPA_SURNAMES if _normalize_name_token(s)
+}
 
 # Common English OCR lookalikes produced when Latin-only OCR encounters Cyrillic character names in DRO
 OCR_CHARACTER_LOOKALIKES = {
     # Kokichi Oma
-    "k0km", "k0km4v1", "k0kb", "k0kb1mm", "k0km-4v1", "omar", "oma",
+    "k0km",
+    "k0km4v1",
+    "k0kb",
+    "k0kb1mm",
+    "k0km-4v1",
+    "omar",
+    "oma",
     # Sonia Nevermind
-    "coma", "sonia", "nevermind", "hevepma", "hebepma", "hebepmav1", "hevepmav1",
+    "coma",
+    "sonia",
+    "nevermind",
+    "hevepma",
+    "hebepma",
+    "hebepmav1",
+    "hevepmav1",
     # Leon Kuwata
-    "neoh", "neon", "kuwata", "kybata", "kasta", "kyvata",
+    "neoh",
+    "neon",
+    "kuwata",
+    "kybata",
+    "kasta",
+    "kyvata",
     # Byakuya Togami
-    "6bakya", "sbakya", "byakya", "byakuya", "togami", "toramy", "toramy1", "torar", "torar4v1",
+    "6bakya",
+    "sbakya",
+    "byakya",
+    "byakuya",
+    "togami",
+    "toramy",
+    "toramy1",
+    "torar",
+    "torar4v1",
     # Rantaro Amami
-    "pahtapo", "pantapo", "rantaro", "amami", "amamm", "arqamb", "arqamb1",
+    "pahtapo",
+    "pantapo",
+    "rantaro",
+    "amami",
+    "amamm",
+    "arqamb",
+    "arqamb1",
     # Himiko Yumeno
-    "xvimviko", "xvimiko", "himiko", "yumeno", "iomeho", "omeh0", "iomeh0",
+    "xvimviko",
+    "xvimiko",
+    "himiko",
+    "yumeno",
+    "iomeho",
+    "omeh0",
+    "iomeh0",
     # Mukuro Ikusaba
-    "mykypo", "mukuro", "ikusaba", "l4kyca6a", "vikyca6a", "ikycaba",
+    "mykypo",
+    "mukuro",
+    "ikusaba",
+    "l4kyca6a",
+    "vikyca6a",
+    "ikycaba",
     # Chiaki Nanami
-    "qnakb", "quakb", "qnakb1", "quakb1", "chiaki", "nanami", "hahamb", "hahamb1", "haglarqn",
+    "qnakb",
+    "quakb",
+    "qnakb1",
+    "quakb1",
+    "chiaki",
+    "nanami",
+    "hahamb",
+    "hahamb1",
+    "haglarqn",
     # Kyoko Kirigiri
-    "keko", "kek0", "kyoko", "kirigiri", "kmpmrnps", "kupurupv1",
+    "keko",
+    "kek0",
+    "kyoko",
+    "kirigiri",
+    "kmpmrnps",
+    "kupurupv1",
     # K1-B0
-    "k1bo", "k1b0", "kibo", "keebo", "kiibo", "klbo", "kib0", "юво", "ю30", "ю80", "10bo",
+    "k1bo",
+    "k1b0",
+    "kibo",
+    "keebo",
+    "kiibo",
+    "klbo",
+    "kib0",
+    "юво",
+    "ю30",
+    "ю80",
+    "10bo",
     # Makoto Naegi
-    "mak0oto0", "mak0ot0", "makot0", "makoto", "naegi", "ha3rm", "haru",
+    "mak0oto0",
+    "mak0ot0",
+    "makot0",
+    "makoto",
+    "naegi",
+    "ha3rm",
+    "haru",
     # Mikan Tsumiki
-    "myikan", "minka", "mikan", "tsumiki", "14ymukl", "14ymukl4",
+    "myikan",
+    "minka",
+    "mikan",
+    "tsumiki",
+    "14ymukl",
+    "14ymukl4",
     # Sayaka Maizono
-    "cama", "camka", "sayaka", "maizono", "ma5130h0", "mav130h0", "maiz0n0",
+    "cama",
+    "camka",
+    "sayaka",
+    "maizono",
+    "ma5130h0",
+    "mav130h0",
+    "maiz0n0",
     # Others
-    "ky3opio", "kuzuryu", "fuyuhiko", "xahgxam", "gundham", "tanaka", "cov130", "kazuichi", "soda",
+    "ky3opio",
+    "kuzuryu",
+    "fuyuhiko",
+    "xahgxam",
+    "gundham",
+    "tanaka",
+    "cov130",
+    "kazuichi",
+    "soda",
 }
 
 # De-homoglyph recovery mapping for English-OCR transliterated Russian player nicknames
@@ -198,24 +663,29 @@ class OcrProcessor:
             return True
 
         # Regex check for robot K1-B0 OCR variants
-        if re.match(r"^(?:[кk]1[\-_]?[вb0o]|ю[\-_]?[вb0o38]|ki[\-_]?bo|keebo|10[\-_]?bo)$", t.replace(" ", "").lower()):
+        if re.match(
+            r"^(?:[кk]1[\-_]?[вb0o]|ю[\-_]?[вb0o38]|ki[\-_]?bo|keebo|10[\-_]?bo)$",
+            t.replace(" ", "").lower(),
+        ):
             return True
 
         words = [w for w in re.split(r"[^\w]+", t.lower()) if w]
         if words:
             words_norm = [_normalize_name_token(w) for w in words]
             if all(
-                w in _CHARACTERS_NORMALIZED 
-                or w in _SURNAMES_NORMALIZED 
-                or w in OCR_CHARACTER_LOOKALIKES 
+                w in _CHARACTERS_NORMALIZED
+                or w in _SURNAMES_NORMALIZED
+                or w in OCR_CHARACTER_LOOKALIKES
                 or any(s in w or w in s for s in _SURNAMES_NORMALIZED if len(s) >= 4)
                 for w in words_norm
             ):
                 return True
             if any(
-                w in _SURNAMES_NORMALIZED 
-                or w in OCR_CHARACTER_LOOKALIKES 
-                or any(s in w or (len(w) >= 4 and w in s) for s in _SURNAMES_NORMALIZED if len(s) >= 4)
+                w in _SURNAMES_NORMALIZED
+                or w in OCR_CHARACTER_LOOKALIKES
+                or any(
+                    s in w or (len(w) >= 4 and w in s) for s in _SURNAMES_NORMALIZED if len(s) >= 4
+                )
                 for w in words_norm
             ):
                 return True
@@ -227,21 +697,159 @@ class OcrProcessor:
         return False
 
     @classmethod
-    def load_image(cls, image_input: io.BytesIO | bytes | str | Image.Image) -> Image.Image:
-        """Load and normalize image into a PIL Image."""
+    def load_image(cls, image_input):
+        """Bounded decoding, EXIF orientation and transparent-background normalization."""
         if isinstance(image_input, Image.Image):
-            return image_input.copy()
-        elif isinstance(image_input, (io.BytesIO, bytes)):
-            bio = io.BytesIO(image_input) if isinstance(image_input, bytes) else image_input
-            return Image.open(bio)
-        elif isinstance(image_input, str):
-            if image_input.startswith("data:image"):
-                header, encoded = image_input.split(",", 1)
-                data = base64.b64decode(encoded)
-                return Image.open(io.BytesIO(data))
-            else:
-                return Image.open(image_input)
-        raise ValueError("Неподдерживаемый тип входного изображения")
+            image = image_input.copy()
+        else:
+            source = image_input
+            if isinstance(source, str) and source.startswith("data:image/"):
+                try:
+                    header, encoded = source.split(",", 1)
+                    if ";base64" not in header or len(encoded) > 12 * 1024 * 1024:
+                        raise ValueError("Изображение превышает 8 МБ или не является base64")
+                    source = base64.b64decode(encoded, validate=True)
+                except (ValueError, TypeError) as exc:
+                    raise ValueError("Некорректное изображение base64") from exc
+            if isinstance(source, bytes):
+                if len(source) > 8 * 1024 * 1024:
+                    raise ValueError("Максимальный размер изображения — 8 МБ")
+                source = io.BytesIO(source)
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
+                    with Image.open(source) as opened:
+                        if opened.format not in ("PNG", "JPEG", "WEBP", "BMP", "TIFF"):
+                            raise ValueError("Поддерживаются PNG, JPEG, WEBP, BMP и TIFF")
+                        cls._check_image_size(opened)
+                        opened.load()
+                        image = ImageOps.exif_transpose(opened).copy()
+            except (
+                UnidentifiedImageError,
+                OSError,
+                Image.DecompressionBombError,
+                Image.DecompressionBombWarning,
+            ) as exc:
+                raise ValueError(
+                    "Не удалось прочитать изображение или оно слишком большое"
+                ) from exc
+        cls._check_image_size(image)
+        if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+            rgba = image.convert("RGBA")
+            white = Image.new("RGBA", rgba.size, "white")
+            image = Image.alpha_composite(white, rgba).convert("RGB")
+        elif image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        return image
+
+    @staticmethod
+    def _check_image_size(image):
+        w, h = image.size
+        if min(w, h) < 1 or max(w, h) > 12000 or w * h > 20000000:
+            raise ValueError("Максимум 20 мегапикселей и 12000 пикселей по стороне")
+
+    @staticmethod
+    @functools.lru_cache(maxsize=1)
+    def tesseract_languages():
+        executable = shutil.which("tesseract")
+        if not executable:
+            return ()
+        try:
+            result = subprocess.run(
+                [executable, "--list-langs"], capture_output=True, text=True, timeout=5, check=True
+            )
+            installed = set(result.stdout.splitlines()[1:])
+            return tuple(lang for lang in ("rus", "eng") if lang in installed)
+        except (OSError, subprocess.SubprocessError):
+            return ()
+
+    @classmethod
+    def engine_name(cls):
+        return getattr(
+            _ENGINE_STATE,
+            "name",
+            (
+                "windows_native"
+                if HAS_WINRT_OCR
+                else ("tesseract" if cls.tesseract_languages() else "unavailable")
+            ),
+        )
+
+    @classmethod
+    def _remaining_budget(cls):
+        deadline = getattr(_ENGINE_STATE, "deadline", None)
+        remaining = deadline - time.monotonic() if deadline is not None else 25
+        if remaining <= 0:
+            raise TimeoutError("OCR превысил 25 секунд. Обрежьте область с никами.")
+        return remaining
+
+    @classmethod
+    def _recognize_tesseract(cls, image_input):
+        languages = cls.tesseract_languages()
+        if not languages:
+            return ""
+        image = cls.preprocess_image(image_input)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        try:
+            result = subprocess.run(
+                [
+                    shutil.which("tesseract"),
+                    "stdin",
+                    "stdout",
+                    "-l",
+                    "+".join(languages),
+                    "--psm",
+                    "6",
+                ],
+                input=buffer.getvalue(),
+                capture_output=True,
+                timeout=min(12, cls._remaining_budget()),
+                check=True,
+            )
+            _ENGINE_STATE.name = "tesseract"
+            return result.stdout.decode("utf-8", errors="replace").strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Локальный Tesseract недоступен: %s", exc)
+            return ""
+
+    @classmethod
+    def annotate_candidates(cls, candidates, client):
+        """Expose identity uncertainty separately from string similarity."""
+        fuzzy = FuzzyMatcher(client)
+        for candidate in candidates:
+            raw = cls.clean_player_token(candidate.get("raw_ocr", ""))
+            alternatives = fuzzy.find_top_matches(raw, limit=3, cutoff=0.65) if raw else []
+            unique = client.find_by_name(candidate["matched_name"])
+            score = candidate.get("similarity", 0)
+            second = next(
+                (s for rec, s in alternatives if rec["id"] != candidate.get("player_id")), 0
+            )
+            homonym = len(unique) > 1
+            needs_review = (
+                not candidate.get("player_id")
+                or homonym
+                or (candidate.get("corrected") and (score < 0.90 or score - second < 0.08))
+            )
+            candidate["needs_review"] = needs_review
+            candidate["review_reason"] = (
+                "Одинаковый ник у нескольких профилей"
+                if homonym
+                else (
+                    "Профиль не найден"
+                    if not candidate.get("player_id")
+                    else "Проверьте исправление OCR" if needs_review else ""
+                )
+            )
+            options = [
+                {"id": rec["id"], "name": rec["name"], "similarity": sim}
+                for rec, sim in alternatives
+            ]
+            for record in unique:
+                if not any(option["id"] == record["id"] for option in options):
+                    options.append({"id": record["id"], "name": record["name"], "similarity": 1.0})
+            candidate["alternatives"] = options[:6]
+        return candidates
 
     @classmethod
     def preprocess_image(
@@ -258,7 +866,11 @@ class OcrProcessor:
         - Contrast enhancement (1.75x) and sharp unsharp mask filter
         - Optional inversion for light/dark themes
         """
-        img = cls.load_image(image_input) if not isinstance(image_input, Image.Image) else image_input.copy()
+        img = (
+            cls.load_image(image_input)
+            if not isinstance(image_input, Image.Image)
+            else image_input.copy()
+        )
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         img = img.convert("L")
@@ -273,6 +885,7 @@ class OcrProcessor:
 
         if invert:
             from PIL import ImageOps
+
             img = ImageOps.invert(img)
 
         if isolate_white_text:
@@ -303,7 +916,7 @@ class OcrProcessor:
         Supports multi-pass: standard contrast + white-text isolation + inverted fallback.
         """
         if not HAS_WINRT_OCR:
-            return ""
+            return cls._recognize_tesseract(image_input)
 
         try:
             engine = _CACHED_ENGINES.get(lang_tags)
@@ -339,7 +952,7 @@ class OcrProcessor:
                     _CACHED_ENGINES[lang_tags] = engine
 
             if not engine:
-                return ""
+                return cls._recognize_tesseract(image_input)
 
             async def _run_ocr_for_image(prep_img: Image.Image) -> List[str]:
                 # BMP stream is 10-15x faster than PNG (no compression CPU bottleneck)
@@ -356,7 +969,9 @@ class OcrProcessor:
 
                 decoder = await win_imaging.BitmapDecoder.create_async(mem_stream)
                 software_bitmap = await decoder.get_software_bitmap_async()
-                ocr_result = await engine.recognize_async(software_bitmap)
+                ocr_result = await asyncio.wait_for(
+                    engine.recognize_async(software_bitmap), timeout=cls._remaining_budget()
+                )
 
                 return [line.text for line in ocr_result.lines]
 
@@ -396,10 +1011,11 @@ class OcrProcessor:
                     except Exception:
                         pass
 
+            _ENGINE_STATE.name = "windows_native"
             return "\n".join(lines)
         except Exception as e:
             logger.warning("Windows Media OCR error: %s", e)
-            return ""
+            return cls._recognize_tesseract(image_input)
 
     @classmethod
     def clean_ocr_token(cls, token: str) -> str:
@@ -423,13 +1039,25 @@ class OcrProcessor:
         if t.endswith(":"):
             t = t[:-1].strip()
         # Remove scoreboard index prefixes: "1.", "01.", "1)", "#1", "#2 ", "P1:", "Игрок 1:"
-        t = re.sub(r"^(?:(?:Player|Игрок)\s*)?#?\d{1,2}(?:[\.\)\:\-]\s*|\s+)", "", t, flags=re.IGNORECASE)
+        t = re.sub(
+            r"^(?:(?:Player|Игрок)\s*)?#?\d{1,2}(?:[\.\)\:\-]\s*|\s+)", "", t, flags=re.IGNORECASE
+        )
         # Remove trailing ping (e.g. ' 45ms', ' 120 ms')
         t = re.sub(r"\s+\d+\s*ms$", "", t, flags=re.IGNORECASE)
         # Remove trailing rating/score markers: "★ 5.00", "5.00", "Rating: 4.8"
-        t = re.sub(r"\s*(?:★|⭐|Рейтинг|Rating|Score)?\s*\b[1-5]\.\d{1,2}\b\s*$", "", t, flags=re.IGNORECASE)
+        t = re.sub(
+            r"\s*(?:★|⭐|Рейтинг|Rating|Score)?\s*\b[1-5]\.\d{1,2}\b\s*$",
+            "",
+            t,
+            flags=re.IGNORECASE,
+        )
         # Remove game role / status tags: (Host), [Гость], (Dead), [Spectator]
-        t = re.sub(r"\s*[\(\[](?:Host|Хост|Dead|Мертв|Alive|Жив|Spectator|Зритель|Admin|Гость)[\)\]]\s*", "", t, flags=re.IGNORECASE)
+        t = re.sub(
+            r"\s*[\(\[](?:Host|Хост|Dead|Мертв|Alive|Жив|Spectator|Зритель|Admin|Гость)[\)\]]\s*",
+            "",
+            t,
+            flags=re.IGNORECASE,
+        )
         # Remove clan tags and bracket annotations: e.g. _[ДВП], -[ДВП1], [CLAN], (TAG)
         t = re.sub(r"[\-_]?[\[\(][^\]\)]+[\]\)1l]?", "", t)
         # Remove trailing chat colon + message if formatted like "Nick: message"
@@ -556,7 +1184,11 @@ class OcrProcessor:
                             continue
                     # Check single token
                     tok = cls.clean_ocr_token(words[idx])
-                    if len(tok) >= 2 and tok.lower() not in ChatLogExtractor.STOP_WORDS and not cls.is_danganronpa_character(tok):
+                    if (
+                        len(tok) >= 2
+                        and tok.lower() not in ChatLogExtractor.STOP_WORDS
+                        and not cls.is_danganronpa_character(tok)
+                    ):
                         candidate_tokens.append(tok)
                     idx += 1
             else:
@@ -588,7 +1220,10 @@ class OcrProcessor:
                 low_tok = tok.lower()
                 # Only split if BOTH prefix and suffix are known players (at least 3 characters each)
                 for split_pos in range(3, tok_len - 2):
-                    if low_tok[:split_pos] in by_name_lower and low_tok[split_pos:] in by_name_lower:
+                    if (
+                        low_tok[:split_pos] in by_name_lower
+                        and low_tok[split_pos:] in by_name_lower
+                    ):
                         final_tokens.append(tok[:split_pos])
                         final_tokens.append(tok[split_pos:])
                         split_done = True
@@ -598,11 +1233,12 @@ class OcrProcessor:
 
         candidate_tokens = final_tokens
 
-        # Step 2: Autocorrect names using exact check + FuzzyMatcher
-        fuzzy = FuzzyMatcher(client)
+        # Step 2: Autocorrect names using exact check + the same index
         results: List[Dict[str, Any]] = []
         seen: set = set()
 
+        if len(candidate_tokens) > 128:
+            raise ValueError("OCR выделил больше 128 токенов. Обрежьте область с никами.")
         for raw_name in candidate_tokens:
             if not raw_name or cls.is_danganronpa_character(raw_name):
                 continue
@@ -615,17 +1251,19 @@ class OcrProcessor:
             if exact:
                 rec = exact[0]
                 seen.add(rec["name"].lower())
-                results.append({
-                    "raw_ocr": raw_name,
-                    "matched_name": rec["name"],
-                    "player_id": rec["id"],
-                    "avg": rec["avg"],
-                    "count": rec["count"],
-                    "avatar_url": client.get_avatar_url(rec.get("avatarGameId")),
-                    "profile_url": f"https://shinrireviews.com/p/{rec['id']}",
-                    "similarity": 1.0,
-                    "corrected": False,
-                })
+                results.append(
+                    {
+                        "raw_ocr": raw_name,
+                        "matched_name": rec["name"],
+                        "player_id": rec["id"],
+                        "avg": rec["avg"],
+                        "count": rec["count"],
+                        "avatar_url": client.get_avatar_url(rec.get("avatarGameId")),
+                        "profile_url": f"https://shinrireviews.com/p/{rec['id']}",
+                        "similarity": 1.0,
+                        "corrected": False,
+                    }
+                )
                 continue
 
             # 2. Fuzzy match against 5,414 players
@@ -635,34 +1273,38 @@ class OcrProcessor:
                     rec, similarity = fuzzy_res
                     if rec["name"].lower() not in seen:
                         seen.add(rec["name"].lower())
-                        results.append({
-                            "raw_ocr": raw_name,
-                            "matched_name": rec["name"],
-                            "player_id": rec["id"],
-                            "avg": rec["avg"],
-                            "count": rec["count"],
-                            "avatar_url": client.get_avatar_url(rec.get("avatarGameId")),
-                            "profile_url": f"https://shinrireviews.com/p/{rec['id']}",
-                            "similarity": round(similarity, 2),
-                            "corrected": True,
-                        })
+                        results.append(
+                            {
+                                "raw_ocr": raw_name,
+                                "matched_name": rec["name"],
+                                "player_id": rec["id"],
+                                "avg": rec["avg"],
+                                "count": rec["count"],
+                                "avatar_url": client.get_avatar_url(rec.get("avatarGameId")),
+                                "profile_url": f"https://shinrireviews.com/p/{rec['id']}",
+                                "similarity": round(similarity, 2),
+                                "corrected": True,
+                            }
+                        )
                         continue
 
             # 3. Fallback: Player not found in database (e.g. newcomer or unrated)
             seen.add(normalized_key)
-            results.append({
-                "raw_ocr": raw_name,
-                "matched_name": raw_name,
-                "player_id": None,
-                "avg": None,
-                "count": 0,
-                "avatar_url": "https://shinrireviews.com/assets/default-LZMr4ZDr.png",
-                "profile_url": None,
-                "similarity": 0.0,
-                "corrected": False,
-            })
+            results.append(
+                {
+                    "raw_ocr": raw_name,
+                    "matched_name": raw_name,
+                    "player_id": None,
+                    "avg": None,
+                    "count": 0,
+                    "avatar_url": "https://shinrireviews.com/assets/default-LZMr4ZDr.png",
+                    "profile_url": None,
+                    "similarity": 0.0,
+                    "corrected": False,
+                }
+            )
 
-        return results
+        return cls.annotate_candidates(results, client)
 
     @classmethod
     def clean_player_token(cls, token: str) -> str:
@@ -710,9 +1352,14 @@ class OcrProcessor:
             return "Dowbraus"
         if any(k in low for k in ["sde", "sdets", "seers", "siders"]):
             return "SiderS"
-        if any(k in low for k in ["d1lan", "011en", "01ten", "мапгч", "мапн", "гддотап", "гадомап"]):
+        if any(
+            k in low for k in ["d1lan", "011en", "01ten", "мапгч", "мапн", "гддотап", "гадомап"]
+        ):
             return "ГАД|D1lanN"
-        if any(k in low for k in ["danov", "darwv", "0anov", "dooov", "daoov", "овгюм", "0•nov", "оагюч"]):
+        if any(
+            k in low
+            for k in ["danov", "darwv", "0anov", "dooov", "daoov", "овгюм", "0•nov", "оагюч"]
+        ):
             return "Danov"
         if low in ("eldon", "seldon", "seeldon", "seeldort", "ee4doo", "9eldon", "eeld0b"):
             return "Seeldon"
@@ -756,11 +1403,13 @@ class OcrProcessor:
         try:
             from winrt.windows.media.ocr import OcrEngine as WinOcr
             from winrt.windows.globalization import Language
+
             en_engine = WinOcr.try_create_from_language(Language("en-US"))
         except Exception:
             pass
 
         for idx in range(rows * cols):
+            cls._remaining_budget()
             r = idx // cols
             c = idx % cols
 
@@ -783,6 +1432,7 @@ class OcrProcessor:
                     import asyncio
                     from winrt.windows.graphics.imaging import BitmapDecoder
                     from winrt.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
+
                     async def _run_en(img):
                         stream = InMemoryRandomAccessStream()
                         writer = DataWriter(stream)
@@ -795,8 +1445,12 @@ class OcrProcessor:
                         stream.seek(0)
                         decoder = await BitmapDecoder.create_async(stream)
                         software_bitmap = await decoder.get_software_bitmap_async()
-                        res = await en_engine.recognize_async(software_bitmap)
+                        res = await asyncio.wait_for(
+                            en_engine.recognize_async(software_bitmap),
+                            timeout=cls._remaining_budget(),
+                        )
                         return " ".join(line.text for line in res.lines).strip()
+
                     t_en = asyncio.run(_run_en(up_a))
                 except Exception:
                     pass
@@ -808,7 +1462,9 @@ class OcrProcessor:
                 y1_b = int(r * card_h + card_h * 0.76)
                 y2_b = int(r * card_h + card_h * 0.98)
                 crop_b = raw_img.crop((x1, y1_b, x2, y2_b)).convert("L")
-                up_b = crop_b.resize((crop_b.width * 4, crop_b.height * 4), Image.Resampling.LANCZOS)
+                up_b = crop_b.resize(
+                    (crop_b.width * 4, crop_b.height * 4), Image.Resampling.LANCZOS
+                )
                 t_ru2 = cls.recognize_native(up_b, multi_pass=False)
                 if t_ru2:
                     raw_tokens.append(t_ru2)
@@ -863,38 +1519,50 @@ class OcrProcessor:
                 if norm_key not in seen:
                     seen.add(norm_key)
                     if matched_rec:
-                        cards.append({
-                            "raw_ocr": raw_tokens[0] if raw_tokens else best_name,
-                            "matched_name": matched_rec["name"],
-                            "player_id": matched_rec["id"],
-                            "avg": matched_rec["avg"],
-                            "count": matched_rec["count"],
-                            "avatar_url": client.get_avatar_url(matched_rec.get("avatarGameId")),
-                            "profile_url": f"https://shinrireviews.com/p/{matched_rec['id']}",
-                            "similarity": round(best_score, 2),
-                            "corrected": best_score < 0.99,
-                        })
+                        cards.append(
+                            {
+                                "raw_ocr": raw_tokens[0] if raw_tokens else best_name,
+                                "matched_name": matched_rec["name"],
+                                "player_id": matched_rec["id"],
+                                "avg": matched_rec["avg"],
+                                "count": matched_rec["count"],
+                                "avatar_url": client.get_avatar_url(
+                                    matched_rec.get("avatarGameId")
+                                ),
+                                "profile_url": f"https://shinrireviews.com/p/{matched_rec['id']}",
+                                "similarity": round(best_score, 2),
+                                "corrected": best_score < 0.99,
+                            }
+                        )
                     else:
-                        cards.append({
-                            "raw_ocr": raw_tokens[0] if raw_tokens else best_name,
-                            "matched_name": best_name,
-                            "player_id": int(best_name) if best_name.isdigit() else None,
-                            "avg": None,
-                            "count": 0,
-                            "avatar_url": "https://shinrireviews.com/assets/default-LZMr4ZDr.png",
-                            "profile_url": f"https://shinrireviews.com/p/{best_name}" if best_name.isdigit() else None,
-                            "similarity": 0.0,
-                            "corrected": False,
-                        })
+                        cards.append(
+                            {
+                                "raw_ocr": raw_tokens[0] if raw_tokens else best_name,
+                                "matched_name": best_name,
+                                "player_id": int(best_name) if best_name.isdigit() else None,
+                                "avg": None,
+                                "count": 0,
+                                "avatar_url": "https://shinrireviews.com/assets/default-LZMr4ZDr.png",
+                                "profile_url": (
+                                    f"https://shinrireviews.com/p/{best_name}"
+                                    if best_name.isdigit()
+                                    else None
+                                ),
+                                "similarity": 0.0,
+                                "corrected": False,
+                            }
+                        )
 
-        return cards
+        return cls.annotate_candidates(cards, client)
 
     @classmethod
+    @ocr_budget
     def process_image(
         cls,
         image_input: io.BytesIO | bytes | str | Image.Image,
         client: ShinriClient,
         auto_fuzzy_correct: bool = True,
+        layout: str = "auto",
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Runs native Windows Media OCR with automatic detection for:
@@ -902,20 +1570,33 @@ class OcrProcessor:
         - Column player scoreboards and lobby room tables
         Returns (clean_text, candidates_list).
         """
+        if layout not in ("auto", "grid", "text"):
+            raise ValueError("Неизвестный макет OCR")
+        if not HAS_WINRT_OCR and not cls.tesseract_languages():
+            raise OcrUnavailable(
+                "OCR-движок не установлен. Установите Windows OCR (ru/en) или Tesseract с rus/eng; пока можно ввести ники вручную."
+            )
+        _ENGINE_STATE.name = "unavailable"
         raw_img = cls.load_image(image_input)
 
         # 1. First check if image is a student card grid
-        grid_candidates = cls.extract_cards_grid(raw_img, client, auto_fuzzy_correct=auto_fuzzy_correct)
-        if len(grid_candidates) >= 6:
-            clean_text = "\n".join(c["matched_name"] for c in grid_candidates)
-            return clean_text, grid_candidates
+        grid_candidates = (
+            cls.extract_cards_grid(raw_img, client, auto_fuzzy_correct=auto_fuzzy_correct)
+            if layout != "text"
+            else []
+        )
+        if layout == "grid" or len(grid_candidates) >= 6:
+            raw_text = "\n".join(c["raw_ocr"] for c in grid_candidates)
+            return raw_text, grid_candidates
 
         # 2. Standard full-image OCR for lobby columns, scoreboard tables, or chat logs
         recognized_text = cls.recognize_native(raw_img)
         if not recognized_text and not grid_candidates:
             return "", []
 
-        candidates = cls.process_screenshot_text(recognized_text, client, auto_fuzzy_correct=auto_fuzzy_correct)
+        candidates = cls.process_screenshot_text(
+            recognized_text, client, auto_fuzzy_correct=auto_fuzzy_correct
+        )
 
         # 3. If grid candidates were found, merge them (avoiding duplicates)
         if grid_candidates:
@@ -926,5 +1607,4 @@ class OcrProcessor:
                     seen_names.add(gc["matched_name"].lower())
 
         clean_text = "\n".join(c["matched_name"] for c in candidates)
-        return clean_text, candidates
-
+        return recognized_text, candidates

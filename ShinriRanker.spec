@@ -23,7 +23,8 @@ binaries = []
 
 # Hidden imports for OCR and optional Rich terminal formatting
 hiddenimports = [
-    'marshal',
+    'gzip',
+    'hashlib',
     'winrt',
     'winrt.windows.foundation',
     'winrt.windows.foundation.collections',

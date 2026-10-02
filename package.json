@@ -1,0 +1,14 @@
+{
+  "name": "shinri-ui-checks",
+  "private": true,
+  "scripts": {
+    "lint": "eslint shinri_ranker/static/app.js",
+    "test:ui": "node scripts/test_ui.cjs",
+    "format:check": "prettier --check shinri_ranker/static/*.{js,css,html}"
+  },
+  "devDependencies": {
+    "eslint": "9.39.1",
+    "playwright": "1.56.1",
+    "prettier": "3.6.2"
+  }
+}
