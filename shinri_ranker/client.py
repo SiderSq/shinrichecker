@@ -20,6 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
+from .transport import JsonTransport
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger("shinri_client")
@@ -233,6 +234,8 @@ class ShinriClient:
         self._negative_name_cache = TTLCache(ttl=60)
         self._negative_id_cache = TTLCache(ttl=60)
 
+        self._transport = JsonTransport()
+
         self._headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
@@ -240,6 +243,14 @@ class ShinriClient:
             "Referer": "https://shinrireviews.com/",
             "Origin": "https://shinrireviews.com",
         }
+
+    @property
+    def generation(self) -> int:
+        with self._index_lock:
+            return self._generation
+
+    def close(self):
+        self._transport.close()
 
     @property
     def is_loaded(self) -> bool:
@@ -304,14 +315,13 @@ class ShinriClient:
             attempt += 1
             try:
                 self._throttle()
-                req = urllib.request.Request(url, headers=self._headers)
-                with urllib.request.urlopen(req, timeout=self._check_deadline()) as resp:
-                    if resp.status == 204:
-                        return None
-                    data = resp.read().decode("utf-8", errors="replace")
-                    if not data.strip():
-                        return None
-                    return json.loads(data)
+                status, body = self._transport.get(url, self._headers, self._check_deadline)
+                if status == 204:
+                    return None
+                data = body.decode("utf-8", errors="replace")
+                if not data.strip():
+                    return None
+                return json.loads(data)
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     return None

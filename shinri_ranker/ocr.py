@@ -7,6 +7,7 @@ Integrates PIL image preprocessing with Windows Media OCR and fuzzy database cor
 from __future__ import annotations
 import asyncio
 import base64
+import math
 import functools
 import io
 import logging
@@ -1555,6 +1556,37 @@ class OcrProcessor:
 
         return cls.annotate_candidates(cards, client)
 
+    @staticmethod
+    def validate_roi(roi):
+        """Normalized, EXIF-oriented image rectangle; None means full image."""
+        if roi is None:
+            return
+        if not isinstance(roi, dict) or set(roi) != {"x", "y", "width", "height"}:
+            raise ValueError("Область OCR: нужны x, y, width и height")
+        for key, value in roi.items():
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError("Координаты области OCR должны быть числами от 0 до 1")
+        if (
+            roi["width"] <= 0
+            or roi["height"] <= 0
+            or roi["x"] + roi["width"] > 1.000001
+            or roi["y"] + roi["height"] > 1.000001
+        ):
+            raise ValueError("Область OCR должна находиться внутри изображения")
+
+    @classmethod
+    def crop_region(cls, image, roi):
+        cls.validate_roi(roi)
+        if roi is None:
+            return image
+        left = round(roi["x"] * image.width)
+        top = round(roi["y"] * image.height)
+        right = min(image.width, round((roi["x"] + roi["width"]) * image.width))
+        bottom = min(image.height, round((roi["y"] + roi["height"]) * image.height))
+        if right - left < 12 or bottom - top < 12:
+            raise ValueError("Область OCR слишком мала: минимум 12×12 пикселей")
+        return image.crop((left, top, right, bottom))
+
     @classmethod
     @ocr_budget
     def process_image(
@@ -1563,6 +1595,7 @@ class OcrProcessor:
         client: ShinriClient,
         auto_fuzzy_correct: bool = True,
         layout: str = "auto",
+        roi: Optional[Dict[str, float]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Runs native Windows Media OCR with automatic detection for:
@@ -1577,7 +1610,7 @@ class OcrProcessor:
                 "OCR-движок не установлен. Установите Windows OCR (ru/en) или Tesseract с rus/eng; пока можно ввести ники вручную."
             )
         _ENGINE_STATE.name = "unavailable"
-        raw_img = cls.load_image(image_input)
+        raw_img = cls.crop_region(cls.load_image(image_input), roi)
 
         # 1. First check if image is a student card grid
         grid_candidates = (

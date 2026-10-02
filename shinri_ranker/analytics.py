@@ -376,7 +376,7 @@ class LobbySafetyMeter:
                         "severity": "danger",
                         "player_id": p.get("player_id"),
                         "name": name,
-                        "text": f"Игрок '{name}' имеет критически низкий рейтинг (★ {avg:.2f}, {reviews} отз.) — сигнал по отзывам, не прогноз поведения.",
+                        "text": f"Игрок '{name}' имеет критически низкий рейтинг (балл {avg:.2f}, {reviews} отз.) — сигнал по отзывам, не прогноз поведения.",
                     }
                 )
             elif avg <= 3.0:
@@ -385,7 +385,7 @@ class LobbySafetyMeter:
                         "severity": "warning",
                         "player_id": p.get("player_id"),
                         "name": name,
-                        "text": f"Игрок '{name}' имеет средний балл ниже среднего (★ {avg:.2f}).",
+                        "text": f"Игрок '{name}' имеет средний балл ниже среднего (балл {avg:.2f}).",
                     }
                 )
 

@@ -13,7 +13,7 @@
       <!-- Header -->
       <header class="header">
         <div class="header-left">
-          <div class="logo-icon">★</div>
+          <div class="logo-icon" aria-hidden="true">S</div>
           <div>
             <h1 class="app-title">
               Shinri <span class="badge-title">LOBBY CHECKER</span>
@@ -27,7 +27,7 @@
             class="btn btn-secondary btn-sm"
             aria-label="Переключить цветовую тему"
           >
-            ◐ Тема
+            Тема
           </button>
           <div id="status-badge" class="status-badge loading">
             <span class="status-dot"></span>
@@ -38,14 +38,14 @@
             class="btn btn-secondary btn-sm"
             title="Обновить базу с shinrireviews.com"
           >
-            🔄 Обновить базу
+            Обновить базу
           </button>
           <button
             id="btn-import-db"
             class="btn btn-secondary btn-sm"
             title="Загрузить оффлайн-базу JSON"
           >
-            📂 Импорт
+            Импорт
           </button>
         </div>
       </header>
@@ -59,7 +59,7 @@
             участников.
           </p>
         </div>
-        <span class="local-badge">● Данные OCR остаются на устройстве</span>
+        <span class="local-badge">Данные OCR остаются на устройстве</span>
       </section>
       <!-- Main Content Layout -->
       <main class="main-content">
@@ -75,14 +75,12 @@
                 Список ников
               </button>
               <button class="tab-btn" data-tab="tab-ocr" id="tab-btn-ocr">
-                📷 Скриншот (OCR)
+                Скриншот (OCR)
               </button>
               <button class="tab-btn" data-tab="tab-chat">
-                💬 Лог чата лобби
+                Лог чата лобби
               </button>
-              <button class="tab-btn" data-tab="tab-file">
-                📁 Файл (.txt)
-              </button>
+              <button class="tab-btn" data-tab="tab-file">Файл (.txt)</button>
             </div>
           </div>
 
@@ -109,9 +107,12 @@
                   <option value="grid">Сетка карточек 2×8 / 1×8</option>
                   <option value="text">Таблица или текст</option>
                 </select>
+                <label class="roi-toggle"
+                  ><input id="ocr-select-region-first" type="checkbox" />
+                  Сначала выделить область с никами</label
+                >
               </div>
               <div id="ocr-drop-zone" class="drop-zone">
-                <div class="drop-icon">📷</div>
                 <p class="drop-title">
                   Перетащите скриншот лобби/таблицы или нажмите для выбора
                 </p>
@@ -132,11 +133,18 @@
                 class="ocr-preview-container hidden"
               >
                 <div class="ocr-image-preview-wrap">
-                  <img
-                    id="ocr-preview-img"
-                    class="ocr-preview-img"
-                    alt="Скриншот"
-                  />
+                  <div id="ocr-image-stage" class="ocr-image-stage">
+                    <img
+                      id="ocr-preview-img"
+                      class="ocr-preview-img"
+                      alt="Скриншот; область OCR можно выделить мышью или задать координатами"
+                    />
+                    <div
+                      id="ocr-region-selection"
+                      class="ocr-region-selection hidden"
+                      aria-hidden="true"
+                    ></div>
+                  </div>
                   <div class="ocr-image-meta">
                     <span id="ocr-image-size">0×0 px</span>
                     <button
@@ -148,6 +156,66 @@
                     </button>
                   </div>
                 </div>
+                <details class="ocr-region-controls" id="ocr-region-controls">
+                  <summary>Область распознавания</summary>
+                  <label class="roi-toggle"
+                    ><input id="ocr-use-region" type="checkbox" /> Только
+                    выделенная область</label
+                  >
+                  <p class="ocr-hint-text">
+                    Включите область и обведите ники на изображении или задайте
+                    координаты в процентах. Затем нажмите «Распознать снова».
+                  </p>
+                  <div class="roi-fields">
+                    <label for="roi-x"
+                      >Слева, %<input
+                        id="roi-x"
+                        type="number"
+                        class="form-control"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value="0"
+                    /></label>
+                    <label for="roi-y"
+                      >Сверху, %<input
+                        id="roi-y"
+                        type="number"
+                        class="form-control"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value="0"
+                    /></label>
+                    <label for="roi-width"
+                      >Ширина, %<input
+                        id="roi-width"
+                        type="number"
+                        class="form-control"
+                        min="0.1"
+                        max="100"
+                        step="0.1"
+                        value="100"
+                    /></label>
+                    <label for="roi-height"
+                      >Высота, %<input
+                        id="roi-height"
+                        type="number"
+                        class="form-control"
+                        min="0.1"
+                        max="100"
+                        step="0.1"
+                        value="100"
+                    /></label>
+                  </div>
+                  <button
+                    id="btn-ocr-region-run"
+                    class="btn btn-secondary"
+                    type="button"
+                  >
+                    Распознать снова
+                  </button>
+                </details>
                 <div class="ocr-status-bar" id="ocr-status-bar">
                   <span class="spinner-sm" id="ocr-spinner"></span>
                   <span id="ocr-status-text"
@@ -164,7 +232,7 @@
                 >
                   <div class="ocr-summary-header">
                     <div class="ocr-found-badge" id="ocr-found-badge">
-                      ✓ Распознано игроков: 0
+                      Распознано игроков: 0
                     </div>
                     <span class="ocr-engine-badge" id="ocr-engine-badge"
                       >Windows Media OCR</span
@@ -204,7 +272,7 @@
                       class="btn btn-primary btn-sm"
                       type="button"
                     >
-                      ✅ Загрузить в список матча
+                      Загрузить в список матча
                     </button>
                     <button
                       id="btn-ocr-calc-now"
@@ -212,7 +280,7 @@
                       type="button"
                       title="Сразу перейти к рейтингу матча"
                     >
-                      ⚡ Рассчитать рейтинг
+                      Рассчитать рейтинг
                     </button>
                     <button
                       id="btn-copy-ocr-list"
@@ -220,7 +288,7 @@
                       type="button"
                       title="Скопировать ники в буфер"
                     >
-                      📋 Скопировать
+                      Скопировать
                     </button>
                   </div>
                 </div>
@@ -232,10 +300,10 @@
                   class="btn btn-secondary btn-sm"
                   title="Вставить изображение из буфера обмена"
                 >
-                  📋 Вставить из буфера (Ctrl+V)
+                  Вставить из буфера (Ctrl+V)
                 </button>
                 <span class="ocr-hint-text"
-                  >💡 Сделайте скриншот (Win+Shift+S) и нажмите Ctrl+V в
+                  >Подсказка: сделайте скриншот (Win+Shift+S) и нажмите Ctrl+V в
                   окне</span
                 >
               </div>
@@ -254,10 +322,10 @@
               ></textarea>
               <div class="tab-actions">
                 <button id="btn-sample-chat" class="btn-link">
-                  💬 Пример лога лобби
+                  Пример лога лобби
                 </button>
                 <button id="btn-extract-chat" class="btn btn-sm btn-secondary">
-                  ⚡ Извлечь ники
+                  Извлечь ники
                 </button>
               </div>
             </div>
@@ -265,7 +333,6 @@
             <!-- File Upload Tab -->
             <div id="tab-file" class="tab-content">
               <div id="drop-zone" class="drop-zone">
-                <div class="drop-icon">📁</div>
                 <p class="drop-title">
                   Перетащите файл со списком игроков (.txt, .csv)
                 </p>
@@ -290,21 +357,21 @@
                   class="btn btn-secondary btn-sm"
                   title="Заполнить готовым матчем на 16 игроков"
                 >
-                  📋 Пример матча (16 игроков)
+                  Пример матча (16 игроков)
                 </button>
                 <button
                   id="btn-dedup-input"
                   class="btn-link"
                   title="Удалить повторяющиеся строки"
                 >
-                  🧹 Без повторов
+                  Удалить повторы
                 </button>
                 <button
                   id="btn-clear-input"
                   class="btn-link text-muted"
                   title="Очистить поле ввода"
                 >
-                  🗑️ Очистить
+                  Очистить
                 </button>
               </div>
               <div id="match-counter" class="match-counter-pill counter-empty">
@@ -313,50 +380,53 @@
               </div>
             </div>
 
-            <!-- Match History Bar -->
-            <div id="match-history-bar" class="match-history-bar hidden">
-              <span class="history-label">🕒 История матчей:</span>
-              <div id="history-pills" class="history-pills"></div>
-              <button
-                id="btn-clear-history"
-                class="btn-clear-history"
-                title="Очистить историю"
-              >
-                ×
-              </button>
-            </div>
+            <details class="input-settings" id="input-settings">
+              <summary>Настройки и история</summary>
+              <!-- Match History Bar -->
+              <div id="match-history-bar" class="match-history-bar hidden">
+                <span class="history-label">История матчей:</span>
+                <div id="history-pills" class="history-pills"></div>
+                <button
+                  id="btn-clear-history"
+                  class="btn-clear-history"
+                  title="Очистить историю"
+                >
+                  ×
+                </button>
+              </div>
 
-            <!-- Config Row -->
-            <div class="config-row">
-              <div class="config-cell">
-                <label for="select-ranking-mode" class="config-label"
-                  >Алгоритм оценки:</label
-                >
-                <select
-                  id="select-ranking-mode"
-                  class="form-control form-control-sm"
-                >
-                  <option value="bayesian">Байесовский рейтинг</option>
-                  <option value="classic">Средняя оценка</option>
-                </select>
+              <!-- Config Row -->
+              <div class="config-row">
+                <div class="config-cell">
+                  <label for="select-ranking-mode" class="config-label"
+                    >Алгоритм оценки:</label
+                  >
+                  <select
+                    id="select-ranking-mode"
+                    class="form-control form-control-sm"
+                  >
+                    <option value="bayesian">Байесовский рейтинг</option>
+                    <option value="classic">Средняя оценка</option>
+                  </select>
+                </div>
+                <div class="config-cell">
+                  <label for="select-strategy" class="config-label"
+                    >Одинаковые ники (омонимы):</label
+                  >
+                  <select
+                    id="select-strategy"
+                    class="form-control form-control-sm"
+                  >
+                    <option value="most_reviews">Автовыбор по отзывам</option>
+                    <option value="manual" selected>Проверять вручную</option>
+                  </select>
+                </div>
               </div>
-              <div class="config-cell">
-                <label for="select-strategy" class="config-label"
-                  >Одинаковые ники (омонимы):</label
-                >
-                <select
-                  id="select-strategy"
-                  class="form-control form-control-sm"
-                >
-                  <option value="most_reviews">Автовыбор по отзывам</option>
-                  <option value="manual" selected>Проверять вручную</option>
-                </select>
-              </div>
-            </div>
+            </details>
 
             <!-- Calculate Action & Live Toggle -->
             <button id="btn-calculate" class="btn btn-primary btn-block btn-lg">
-              <span class="btn-icon">⚡</span> Рассчитать рейтинг матча
+              Рассчитать рейтинг матча
               <span class="btn-kbd-badge"
                 ><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span
               >
@@ -369,8 +439,7 @@
                 <input type="checkbox" id="check-live-eval" checked />
                 <span class="live-toggle-indicator"></span>
                 <span class="live-toggle-text"
-                  >⚡ Мгновенный авто-расчет на лету (при 16 игроках и по
-                  Ctrl+V)</span
+                  >Автоматический расчёт (при 16 игроках и по Ctrl+V)</span
                 >
               </label>
             </div>
@@ -407,6 +476,13 @@
               </div>
 
               <!-- Sort Toggle & Search Toolbar -->
+              <div class="results-view-control">
+                <label for="select-density">Вид списка</label>
+                <select id="select-density" class="form-control">
+                  <option value="comfortable">Подробный</option>
+                  <option value="compact">Компактный</option>
+                </select>
+              </div>
               <div class="results-toolbar">
                 <div class="sort-toggle-group">
                   <button
@@ -426,7 +502,6 @@
                 </div>
 
                 <div class="search-wrap">
-                  <span class="search-icon">🔍</span>
                   <input
                     type="text"
                     id="player-filter-input"
@@ -448,7 +523,7 @@
                   class="btn btn-secondary btn-sm"
                   title="Скопировать рейтинг матча в буфер обмена"
                 >
-                  📋 Скопировать список
+                  Скопировать список
                 </button>
               </div>
             </div>
@@ -464,7 +539,6 @@
                 Готово к проверке
               </p>
               <div id="results-empty" class="empty-results">
-                <span class="empty-mark" aria-hidden="true">◎</span>
                 <h3>Здесь появится ваше лобби</h3>
                 <p>
                   Добавьте участников слева или вставьте скриншот через Ctrl+V.
@@ -570,7 +644,7 @@
     >
       <div class="modal-card modal-card-sm">
         <div class="modal-header">
-          <h3 id="swap-title" class="modal-title">⇄ Быстрая замена игрока</h3>
+          <h3 id="swap-title" class="modal-title">Быстрая замена игрока</h3>
           <button
             id="btn-close-swap-modal"
             aria-label="Закрыть замену"
@@ -599,7 +673,7 @@
         <div class="modal-footer">
           <button id="btn-cancel-swap" class="btn btn-secondary">Отмена</button>
           <button id="btn-confirm-swap" class="btn btn-primary">
-            ⚡ Заменить и пересчитать
+            Заменить и пересчитать
           </button>
         </div>
       </div>
@@ -613,6 +687,12 @@
       aria-live="polite"
     ></div>
 
+    <div id="mobile-action-bar" class="mobile-action-bar">
+      <span id="mobile-match-count">0 / 16</span>
+      <button id="btn-mobile-calculate" class="btn btn-primary" type="button">
+        Рассчитать матч
+      </button>
+    </div>
     <script src="/static/app.js"></script>
   </body>
 </html>

@@ -56,20 +56,20 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
     console.print()
     console.print(
         Panel.fit(
-            f"[bold cyan]Shinri Reviews ★ Анализ и Рейтинг игроков DRO[/bold cyan]\n"
+            f"[bold cyan]Shinri Reviews Анализ и Рейтинг игроков DRO[/bold cyan]\n"
             f"[dim]Режим:[/dim] [bold yellow]{mode_text}[/bold yellow] | "
             f"[dim]Всего во вводе:[/dim] [bold]{report.total_inputs}[/bold] | "
             f"[dim]Уникальных:[/dim] [bold]{report.unique_inputs}[/bold] | "
             f"[dim]Топ:[/dim] [bold]Топ-{report.top_n}[/bold] (мин. {report.min_reviews} отз.)",
             border_style="magenta",
-            title="📊 Сводка",
+            title="Сводка",
         )
     )
     console.print()
 
     # Best players table
     table_best = Table(
-        title=f"🏆 ТОП ЛУЧШИХ ИГРОКОВ (Топ {report.top_n})",
+        title=f"ТОП ЛУЧШИХ ИГРОКОВ (Топ {report.top_n})",
         box=box.ROUNDED,
         header_style="bold yellow",
         border_style="yellow",
@@ -86,17 +86,13 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
         table_best.add_row("-", "[dim]Нет подходящих игроков[/dim]", "-", "-", "-", "-", "-")
     else:
         for p in report.best_players:
-            medal = (
-                "🥇 "
-                if p.rank == 1
-                else ("🥈 " if p.rank == 2 else ("🥉 " if p.rank == 3 else f"{p.rank}"))
-            )
+            medal = str(p.rank)
             table_best.add_row(
                 medal,
                 p.name,
                 str(p.player_id),
-                f"★ {p.avg_rating:.2f}",
-                f"★ {p.bayesian_score:.2f}",
+                f"{p.avg_rating:.2f}",
+                f"{p.bayesian_score:.2f}",
                 str(p.reviews_count),
                 p.profile_url,
             )
@@ -106,7 +102,7 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
 
     # Worst players table
     table_worst = Table(
-        title=f"⚠️ АНТИТОП (ХУДШИЕ ИГРОКИ) (Топ {report.top_n})",
+        title=f"АНТИТОП (ХУДШИЕ ИГРОКИ) (Топ {report.top_n})",
         box=box.ROUNDED,
         header_style="bold red",
         border_style="red",
@@ -127,8 +123,8 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
                 str(p.rank),
                 p.name,
                 str(p.player_id),
-                f"★ {p.avg_rating:.2f}",
-                f"★ {p.bayesian_score:.2f}",
+                f"{p.avg_rating:.2f}",
+                f"{p.bayesian_score:.2f}",
                 str(p.reviews_count),
                 p.profile_url,
             )
@@ -139,7 +135,7 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
     # Diagnostics sections if any
     if report.unrated_players:
         table_unrated = Table(
-            title="⏳ Профили без оценок (0 отзывов)", box=box.SIMPLE, header_style="dim"
+            title="Профили без оценок (0 отзывов)", box=box.SIMPLE, header_style="dim"
         )
         table_unrated.add_column("Стр.")
         table_unrated.add_column("Имя / Ввод")
@@ -157,21 +153,22 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
 
     if report.ambiguous_players:
         table_amb = Table(
-            title="❓ Неоднозначные совпадения (омонимы)", box=box.SIMPLE, header_style="magenta"
+            title="Неоднозначные совпадения (омонимы)", box=box.SIMPLE, header_style="magenta"
         )
         table_amb.add_column("Стр.")
         table_amb.add_column("Ввод")
         table_amb.add_column("Кандидаты в базе")
         for p in report.ambiguous_players:
             cands = ", ".join(
-                f"{c['name']} (ID {c['id']}, {c['count']} отз., ★ {c['avg']})" for c in p.candidates
+                f"{c['name']} (ID {c['id']}, {c['count']} отз., балл {c['avg']})"
+                for c in p.candidates
             )
             table_amb.add_row(str(p.line_number), p.input_text, cands)
         console.print(table_amb)
         console.print()
 
     if report.missing_players:
-        table_miss = Table(title="❌ Не найдены на сайте", box=box.SIMPLE, header_style="dim red")
+        table_miss = Table(title="Не найдены на сайте", box=box.SIMPLE, header_style="dim red")
         table_miss.add_column("Стр.")
         table_miss.add_column("Исходный ввод")
         table_miss.add_column("Причина")
@@ -182,7 +179,7 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
 
     if report.duplicates:
         table_dup = Table(
-            title="📋 Обнаруженные дубликаты во вводе", box=box.SIMPLE, header_style="dim"
+            title="Обнаруженные дубликаты во вводе", box=box.SIMPLE, header_style="dim"
         )
         table_dup.add_column("Стр.")
         table_dup.add_column("Исходный ввод")
@@ -196,47 +193,43 @@ def print_rich_report(report: RankingReport, console: "Console") -> None:
 def print_plain_report(report: RankingReport) -> None:
     """Fallback plain text printer."""
     print("=" * 70)
-    print("Shinri Reviews ★ Анализ и Рейтинг игроков")
+    print("Shinri Reviews Анализ и Рейтинг игроков")
     print(
         f"Всего во вводе: {report.total_inputs} | Уникальных: {report.unique_inputs} | Топ-{report.top_n}"
     )
     print("=" * 70)
-    print("\n[🏆 ТОП ЛУЧШИХ ИГРОКОВ]")
+    print("\n[ТОП ЛУЧШИХ ИГРОКОВ]")
     print(f"{'№':<4} {'Имя игрока':<25} {'Рейтинг':<10} {'Отзывы':<8} {'Ссылка на профиль'}")
     print("-" * 70)
     for p in report.best_players:
-        print(
-            f"{p.rank:<4} {p.name:<25} ★ {p.avg_rating:<8.2f} {p.reviews_count:<8} {p.profile_url}"
-        )
+        print(f"{p.rank:<4} {p.name:<25} {p.avg_rating:<8.2f} {p.reviews_count:<8} {p.profile_url}")
 
-    print("\n[⚠️ АНТИТОП (ХУДШИЕ ИГРОКИ)]")
+    print("\n[АНТИТОП (ХУДШИЕ ИГРОКИ)]")
     print(f"{'№':<4} {'Имя игрока':<25} {'Рейтинг':<10} {'Отзывы':<8} {'Ссылка на профиль'}")
     print("-" * 70)
     for p in report.worst_players:
-        print(
-            f"{p.rank:<4} {p.name:<25} ★ {p.avg_rating:<8.2f} {p.reviews_count:<8} {p.profile_url}"
-        )
+        print(f"{p.rank:<4} {p.name:<25} {p.avg_rating:<8.2f} {p.reviews_count:<8} {p.profile_url}")
 
     if report.unrated_players:
-        print(f"\n[⏳ Без оценок: {len(report.unrated_players)} чел.]")
+        print(f"\n[Без оценок: {len(report.unrated_players)} чел.]")
         for p in report.unrated_players:
             print(
                 f"  Стр. {p.line_number}: {p.name or p.input_text} (ID: {p.player_id or '—'}) — 0 отзывов"
             )
 
     if report.ambiguous_players:
-        print(f"\n[❓ Неоднозначные совпадения: {len(report.ambiguous_players)}]")
+        print(f"\n[Неоднозначные совпадения: {len(report.ambiguous_players)}]")
         for p in report.ambiguous_players:
             cands = ", ".join(f"ID {c['id']}" for c in p.candidates)
             print(f"  Стр. {p.line_number}: {p.input_text} -> варианты: {cands}")
 
     if report.missing_players:
-        print(f"\n[❌ Не найдены на сайте: {len(report.missing_players)}]")
+        print(f"\n[Не найдены на сайте: {len(report.missing_players)}]")
         for p in report.missing_players:
             print(f"  Стр. {p.line_number}: {p.input_text}")
 
     if report.duplicates:
-        print(f"\n[📋 Дубликаты во вводе: {len(report.duplicates)}]")
+        print(f"\n[Дубликаты во вводе: {len(report.duplicates)}]")
         for p in report.duplicates:
             print(f"  Стр. {p.line_number}: {p.input_text} -> {p.resolution_note}")
     print()
@@ -255,20 +248,20 @@ def print_rich_balance_teams(balance: dict, console: "Console") -> None:
     console.print()
     console.print(
         Panel.fit(
-            f"[bold cyan]⚖️ Честный балансировщик команд (Fair Matchmaking)[/bold cyan]\n"
+            f"[bold cyan]Честный балансировщик команд (Fair Matchmaking)[/bold cyan]\n"
             f"Честность матча: [bold {color}]{fairness:.1f}%[/bold {color}] | Разница баллов (Delta): [bold]{balance.get('delta', 0.0):.2f}[/bold]\n"
             f"Прогноз исхода (Elo): [bold blue]Синие {win_a:.1f}%[/bold blue] vs [bold red]Красные {win_b:.1f}%[/bold red]\n"
-            f"[dim]Команда Синих:[/dim] ★ {balance.get('avg_a', 0.0):.2f} (Elo: [cyan]{balance.get('elo_a', 1500)}[/cyan], Сумма: {balance.get('score_a', 0.0):.2f}) | "
-            f"[dim]Команда Красных:[/dim] ★ {balance.get('avg_b', 0.0):.2f} (Elo: [magenta]{balance.get('elo_b', 1500)}[/magenta], Сумма: {balance.get('score_b', 0.0):.2f})",
+            f"[dim]Команда Синих:[/dim] ср. балл {balance.get('avg_a', 0.0):.2f} (Elo: [cyan]{balance.get('elo_a', 1500)}[/cyan], Сумма: {balance.get('score_a', 0.0):.2f}) | "
+            f"[dim]Команда Красных:[/dim] ср. балл {balance.get('avg_b', 0.0):.2f} (Elo: [magenta]{balance.get('elo_b', 1500)}[/magenta], Сумма: {balance.get('score_b', 0.0):.2f})",
             border_style="cyan",
-            title="🎮 Баланс матча",
+            title="Баланс матча",
         )
     )
     console.print()
 
     # Team Blue Table
     table_a = Table(
-        title="🔵 СИНЯЯ КОМАНДА (Team Blue)",
+        title="СИНЯЯ КОМАНДА (Team Blue)",
         box=box.ROUNDED,
         header_style="bold blue",
         border_style="blue",
@@ -287,9 +280,9 @@ def print_rich_balance_teams(balance: dict, console: "Console") -> None:
             str(idx),
             f"{p.get('name', 'Игрок')}{role}",
             str(p.get("player_id", "-")),
-            f"★ {float(p.get('bayesian_score', 0.0)):.2f}",
+            f"{float(p.get('bayesian_score', 0.0)):.2f}",
             str(p.get("elo", 1500)),
-            f"★ {float(p.get('avg_rating', 0.0)):.2f}",
+            f"{float(p.get('avg_rating', 0.0)):.2f}",
             str(p.get("reviews_count", 0)),
         )
     console.print(table_a)
@@ -297,7 +290,7 @@ def print_rich_balance_teams(balance: dict, console: "Console") -> None:
 
     # Team Red Table
     table_b = Table(
-        title="🔴 КРАСНАЯ КОМАНДА (Team Red)",
+        title="КРАСНАЯ КОМАНДА (Team Red)",
         box=box.ROUNDED,
         header_style="bold red",
         border_style="red",
@@ -316,9 +309,9 @@ def print_rich_balance_teams(balance: dict, console: "Console") -> None:
             str(idx),
             f"{p.get('name', 'Игрок')}{role}",
             str(p.get("player_id", "-")),
-            f"★ {float(p.get('bayesian_score', 0.0)):.2f}",
+            f"{float(p.get('bayesian_score', 0.0)):.2f}",
             str(p.get("elo", 1500)),
-            f"★ {float(p.get('avg_rating', 0.0)):.2f}",
+            f"{float(p.get('avg_rating', 0.0)):.2f}",
             str(p.get("reviews_count", 0)),
         )
     console.print(table_b)
@@ -335,24 +328,24 @@ def print_plain_balance_teams(balance: dict) -> None:
         win_b *= 100.0
     print("=" * 70)
     print(
-        f"⚖️ Баланс команд: Честность {balance.get('fairness', 100.0):.1f}% (Delta: {balance.get('delta', 0.0):.2f})"
+        f"Баланс команд: Честность {balance.get('fairness', 100.0):.1f}% (Delta: {balance.get('delta', 0.0):.2f})"
     )
     print(f"Прогноз победы (Elo): Синие {win_a:.1f}% vs Красные {win_b:.1f}%")
     print(
-        f"Синие: ср. балл ★ {balance.get('avg_a', 0.0):.2f} (Elo {balance.get('elo_a', 1500)}) | Красные: ср. балл ★ {balance.get('avg_b', 0.0):.2f} (Elo {balance.get('elo_b', 1500)})"
+        f"Синие: ср. балл {balance.get('avg_a', 0.0):.2f} (Elo {balance.get('elo_a', 1500)}) | Красные: ср. балл {balance.get('avg_b', 0.0):.2f} (Elo {balance.get('elo_b', 1500)})"
     )
     print("=" * 70)
-    print("\n🔵 СИНЯЯ КОМАНДА:")
+    print("\nСИНЯЯ КОМАНДА:")
     for idx, p in enumerate(balance.get("team_a", []), 1):
         cap = " [Капитан]" if idx == 1 else ""
         print(
-            f"  {idx}. {p.get('name')}{cap} — Байес: ★ {p.get('bayesian_score', 0.0):.2f} | Elo: {p.get('elo', 1500)} (отз.: {p.get('reviews_count', 0)})"
+            f"  {idx}. {p.get('name')}{cap} — Байес: {p.get('bayesian_score', 0.0):.2f} | Elo: {p.get('elo', 1500)} (отз.: {p.get('reviews_count', 0)})"
         )
-    print("\n🔴 КРАСНАЯ КОМАНДА:")
+    print("\nКРАСНАЯ КОМАНДА:")
     for idx, p in enumerate(balance.get("team_b", []), 1):
         cap = " [Капитан]" if idx == 1 else ""
         print(
-            f"  {idx}. {p.get('name')}{cap} — Байес: ★ {p.get('bayesian_score', 0.0):.2f} | Elo: {p.get('elo', 1500)} (отз.: {p.get('reviews_count', 0)})"
+            f"  {idx}. {p.get('name')}{cap} — Байес: {p.get('bayesian_score', 0.0):.2f} | Elo: {p.get('elo', 1500)} (отз.: {p.get('reviews_count', 0)})"
         )
     print()
 
@@ -364,22 +357,26 @@ def print_rich_lobby_safety(safety: dict, console: "Console") -> None:
     console.print()
     console.print(
         Panel.fit(
-            f"[bold {color}]🛡️ Индекс безопасности комнаты: {score}/100[/bold {color}]\n"
+            f"[bold {color}]Индекс безопасности комнаты: {score}/100[/bold {color}]\n"
             f"Статус: [bold {color}]{safety.get('label')}[/bold {color}] | "
             f"Опасных игроков: [bold red]{safety.get('danger_count', 0)}[/bold red] | "
             f"Новичков без оценок: [bold yellow]{safety.get('unrated_count', 0)}[/bold yellow]",
             border_style=color,
-            title="⚠️ Анализ токсичности и надежности лобби",
+            title="Анализ токсичности и надежности лобби",
         )
     )
     warnings = safety.get("warnings", [])
     if warnings:
         warn_table = Table(box=box.SIMPLE, show_header=False)
-        warn_table.add_column("Иконка", width=3)
+        warn_table.add_column("Уровень", min_width=14)
         warn_table.add_column("Предупреждение")
         for w in warnings:
             sev = w.get("severity")
-            icon = "🔴" if sev == "danger" else ("🟡" if sev == "warning" else "ℹ️")
+            icon = (
+                "Опасность"
+                if sev == "danger"
+                else ("Предупреждение" if sev == "warning" else "Информация")
+            )
             style = "bold red" if sev == "danger" else ("yellow" if sev == "warning" else "dim")
             warn_table.add_row(icon, f"[{style}]{w.get('text')}[/{style}]")
         console.print(warn_table)
@@ -389,7 +386,7 @@ def print_rich_lobby_safety(safety: dict, console: "Console") -> None:
 def print_plain_lobby_safety(safety: dict) -> None:
     """Plain text lobby safety output."""
     print("=" * 70)
-    print(f"🛡️ Индекс безопасности лобби: {safety.get('score')}/100 — {safety.get('label')}")
+    print(f"Индекс безопасности лобби: {safety.get('score')}/100 — {safety.get('label')}")
     print(
         f"Опасных игроков: {safety.get('danger_count', 0)} | Новичков без оценок: {safety.get('unrated_count', 0)}"
     )
@@ -409,25 +406,25 @@ def print_rich_clans(clan_stats: dict, teaming_alert: dict, console: "Console") 
     is_risk = teaming_alert.get("is_risk", False)
     color = "red" if is_risk else "green"
     status_msg = (
-        "⚠️ Обнаружен риск тиминга/сговора!"
+        "Предупреждение: обнаружен риск тиминга/сговора!"
         if is_risk
-        else "✓ Риск сговора не зафиксирован (кланы распределены)"
+        else "Риск сговора не зафиксирован (кланы распределены)"
     )
     console.print(
         Panel.fit(
-            f"[bold {color}]🛡️ Анализ кланов и проверка на сговор[/bold {color}]\n"
+            f"[bold {color}]Анализ кланов и проверка на сговор[/bold {color}]\n"
             f"Уникальных кланов в лобби: [bold cyan]{len(clan_stats)}[/bold cyan] | Статус: [bold {color}]{status_msg}[/bold {color}]",
             border_style=color,
-            title="👥 Клановая аналитика",
+            title="Клановая аналитика",
         )
     )
     if teaming_alert.get("warnings"):
         for w in teaming_alert["warnings"]:
-            console.print(f"  [bold red]⚠️ {w['text']}[/bold red]")
+            console.print(f"  [bold red]{w['text']}[/bold red]")
         console.print()
 
     if clan_stats:
-        table = Table(title="🏷️ Кланы в лобби", box=box.ROUNDED, header_style="bold yellow")
+        table = Table(title="Кланы в лобби", box=box.ROUNDED, header_style="bold yellow")
         table.add_column("Клан", style="bold yellow")
         table.add_column("Участников", justify="center")
         table.add_column("Ср. балл", justify="center")
@@ -438,7 +435,7 @@ def print_rich_clans(clan_stats: dict, teaming_alert: dict, console: "Console") 
             table.add_row(
                 f"[{tag}]",
                 str(c.get("count", 0)),
-                f"★ {c.get('avg_score', 0.0):.2f}",
+                f"{c.get('avg_score', 0.0):.2f}",
                 str(c.get("avg_elo", 1500)),
                 members_str,
             )
@@ -451,7 +448,7 @@ def print_rich_clans(clan_stats: dict, teaming_alert: dict, console: "Console") 
 def print_plain_clans(clan_stats: dict, teaming_alert: dict) -> None:
     """Plain text clan analytics."""
     print("=" * 70)
-    print(f"👥 Клановая аналитика: {len(clan_stats)} кланов")
+    print(f"Клановая аналитика: {len(clan_stats)} кланов")
     print("=" * 70)
     if teaming_alert.get("warnings"):
         for w in teaming_alert["warnings"]:
@@ -459,7 +456,7 @@ def print_plain_clans(clan_stats: dict, teaming_alert: dict) -> None:
     if clan_stats:
         for tag, c in clan_stats.items():
             print(
-                f"  [{tag}] ({c.get('count', 0)} чел., ср. ★ {c.get('avg_score', 0.0):.2f}, Elo {c.get('avg_elo', 1500)}): {', '.join(c.get('members', []))}"
+                f"  [{tag}] ({c.get('count', 0)} чел., ср. {c.get('avg_score', 0.0):.2f}, Elo {c.get('avg_elo', 1500)}): {', '.join(c.get('members', []))}"
             )
     else:
         print("  Клановых тегов не обнаружено.")
@@ -473,16 +470,16 @@ def print_rich_tournament(tournament_data: dict, console: "Console") -> None:
     if fmt == "single_elimination":
         console.print(
             Panel.fit(
-                f"[bold gold1]🏆 Турнирная сетка на выбывание (Single Elimination)[/bold gold1]\n"
+                f"[bold gold1]Турнирная сетка на выбывание (Single Elimination)[/bold gold1]\n"
                 f"Всего участников: [bold]{tournament_data.get('total_participants', 0)}[/bold] | "
                 f"Раундов: [bold]{len(tournament_data.get('rounds', []))}[/bold]",
                 border_style="yellow",
-                title="⚔️ Play-off Bracket",
+                title="Play-off Bracket",
             )
         )
         for r in tournament_data.get("rounds", []):
             table = Table(
-                title=f"📅 {r.get('round_name')}", box=box.ROUNDED, header_style="bold magenta"
+                title=f"{r.get('round_name')}", box=box.ROUNDED, header_style="bold magenta"
             )
             table.add_column("Матч", justify="center", width=4)
             table.add_column("Игрок 1", style="bold white")
@@ -517,18 +514,18 @@ def print_rich_tournament(tournament_data: dict, console: "Console") -> None:
     else:
         console.print(
             Panel.fit(
-                f"[bold gold1]🏆 Турнирный групповой этап (Round Robin)[/bold gold1]\n"
+                f"[bold gold1]Турнирный групповой этап (Round Robin)[/bold gold1]\n"
                 f"Всего участников: [bold]{tournament_data.get('total_participants', 0)}[/bold] | "
                 f"Групп: [bold]{len(tournament_data.get('groups', []))}[/bold]",
                 border_style="yellow",
-                title="👥 Group Stage",
+                title="Group Stage",
             )
         )
         raw_groups = tournament_data.get("groups", [])
         group_list = list(raw_groups.values()) if isinstance(raw_groups, dict) else raw_groups
         for g in group_list:
             table = Table(
-                title=f"📌 {g.get('group_name')}", box=box.ROUNDED, header_style="bold yellow"
+                title=f"{g.get('group_name')}", box=box.ROUNDED, header_style="bold yellow"
             )
             table.add_column("Посев", justify="center", width=5)
             table.add_column("Игрок", style="bold white")
@@ -539,7 +536,7 @@ def print_rich_tournament(tournament_data: dict, console: "Console") -> None:
                 p_score = p.get("score", 0.0) if isinstance(p, dict) else 0.0
                 p_elo = p.get("elo", 1500) if isinstance(p, dict) else 1500
                 p_seed = p.get("seed", "-") if isinstance(p, dict) else "-"
-                table.add_row(f"#{p_seed}", p_name, f"★ {p_score:.2f}", str(p_elo))
+                table.add_row(f"#{p_seed}", p_name, f"{p_score:.2f}", str(p_elo))
             console.print(table)
 
             if g.get("matches"):
@@ -561,7 +558,7 @@ def print_plain_tournament(tournament_data: dict) -> None:
     """Plain text tournament."""
     fmt = tournament_data.get("format", "single_elimination")
     print("=" * 70)
-    print(f"🏆 Турнирное расписание ({fmt})")
+    print(f"Турнирное расписание ({fmt})")
     print("=" * 70)
     if fmt == "single_elimination":
         for r in tournament_data.get("rounds", []):
@@ -581,7 +578,7 @@ def print_plain_tournament(tournament_data: dict) -> None:
                 p_score = p.get("score", 0.0) if isinstance(p, dict) else 0.0
                 p_elo = p.get("elo", 1500) if isinstance(p, dict) else 1500
                 p_seed = p.get("seed", "-") if isinstance(p, dict) else "-"
-                print(f"  #{p_seed} {p_name} (★{p_score:.2f}, Elo: {p_elo})")
+                print(f"  #{p_seed} {p_name} (балл {p_score:.2f}, Elo: {p_elo})")
             print("  Матчи:")
             for m in g.get("matches", []):
                 print(
@@ -598,13 +595,13 @@ def run_cli(args: argparse.Namespace) -> int:
     if args.export_db:
         print(f"Экспорт базы данных в {args.export_db}...")
         client.export_cache(args.export_db)
-        print("✓ Экспорт успешно завершен.")
+        print("Экспорт успешно завершен.")
         return 0
 
     if args.import_db:
         print(f"Импорт базы данных из {args.import_db}...")
         count = client.import_cache(args.import_db)
-        print(f"✓ Успешно импортировано {count} игроков в локальную базу.")
+        print(f"Успешно импортировано {count} игроков в локальную базу.")
         return 0
 
     # 2. Collect input text
@@ -631,16 +628,17 @@ def run_cli(args: argparse.Namespace) -> int:
             print("OCR не смог извлечь игроков со скриншота.", file=sys.stderr)
             return 1
         if not args.quiet:
-            print(f"✓ Распознано кандидатов: {len(candidates)}", file=sys.stderr)
+            print(f"Распознано кандидатов: {len(candidates)}", file=sys.stderr)
             for c in candidates:
                 if c["corrected"]:
                     print(
-                        f"   💡 '{c['raw_ocr']}' -> '{c['matched_name']}' (исправлена опечатка, схожесть {int(c['similarity']*100)}%)",
+                        f"   Исправление OCR: '{c['raw_ocr']}' -> '{c['matched_name']}' (исправлена опечатка, схожесть {int(c['similarity']*100)}%)",
                         file=sys.stderr,
                     )
                 elif c["player_id"]:
                     print(
-                        f"   ✓ '{c['matched_name']}' (найден в базе, ★ {c['avg']})", file=sys.stderr
+                        f"   '{c['matched_name']}' (найден в базе, балл {c['avg']})",
+                        file=sys.stderr,
                     )
                 else:
                     print(f"   • '{c['matched_name']}' (не найден в базе)", file=sys.stderr)
@@ -691,7 +689,7 @@ def run_cli(args: argparse.Namespace) -> int:
             client.load_ratings()
             if not args.quiet:
                 print(
-                    f"✓ Загружено {client.total_rated_players} игроков (источник: {client.data_source})",
+                    f"Загружено {client.total_rated_players} игроков (источник: {client.data_source})",
                     file=sys.stderr,
                 )
     except ShinriNetworkError as e:
@@ -786,16 +784,16 @@ def run_cli(args: argparse.Namespace) -> int:
     # 9. Exports
     if args.export_csv:
         Exporter.to_csv(report, args.export_csv)
-        print(f"✓ Результаты экспортированы в CSV: {args.export_csv}")
+        print(f"Результаты экспортированы в CSV: {args.export_csv}")
 
     if args.export_json:
         Exporter.to_json(report, args.export_json)
-        print(f"✓ Результаты экспортированы в JSON: {args.export_json}")
+        print(f"Результаты экспортированы в JSON: {args.export_json}")
 
     if args.export_md:
         md_text = Exporter.to_markdown(report)
         with open(args.export_md, "w", encoding="utf-8") as f:
             f.write(md_text)
-        print(f"✓ Результаты экспортированы в Markdown: {args.export_md}")
+        print(f"Результаты экспортированы в Markdown: {args.export_md}")
 
     return 0

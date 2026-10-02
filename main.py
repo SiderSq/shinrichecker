@@ -233,7 +233,7 @@ def main() -> int:
         try:
             import ctypes
 
-            ctypes.windll.kernel32.SetConsoleTitleW("★ Shinri Reviews Ranker (DRO Edition) v2.1 ★")
+            ctypes.windll.kernel32.SetConsoleTitleW("Shinri Reviews Ranker (DRO Edition) v2.1")
         except Exception:
             pass
 
@@ -258,9 +258,9 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
     # Если запрошен явный режим работы через браузер
     if getattr(args, "browser", False):
         print("=" * 70, flush=True)
-        print("  ★ SHINRI REVIEWS RANKER (DRO EDITION) v2.1 ★", flush=True)
-        print(f"  ✓ Локальный веб-сервер запущен: {url}", flush=True)
-        print("  ✓ Открываем панель управления в браузере...", flush=True)
+        print("  SHINRI REVIEWS RANKER (DRO EDITION) v2.1", flush=True)
+        print(f"  Локальный веб-сервер запущен: {url}", flush=True)
+        print("  Открываем панель управления в браузере...", flush=True)
         print("=" * 70, flush=True)
         if not getattr(args, "no_browser", False):
 
@@ -316,7 +316,7 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
             )
 
         window = webview.create_window(
-            title="★ Shinri Reviews Ranker (DRO Edition) v2.1 ★",
+            title="Shinri Reviews Ranker (DRO Edition) v2.1",
             url=url,
             width=1260,
             height=820,
@@ -336,9 +336,9 @@ def run_desktop_app(args, client: ShinriClient, server, url: str) -> int:
     # Резервный режим на случай, если графическая подсистема Windows повреждена
     if not gui_started:
         print("=" * 70, flush=True)
-        print("  ★ SHINRI REVIEWS RANKER (DRO EDITION) v2.1 ★", flush=True)
-        print(f"  ✓ Сервер запущен: {url}", flush=True)
-        print("  ✓ Открываем панель управления в браузере...", flush=True)
+        print("  SHINRI REVIEWS RANKER (DRO EDITION) v2.1", flush=True)
+        print(f"  Сервер запущен: {url}", flush=True)
+        print("  Открываем панель управления в браузере...", flush=True)
         print("=" * 70, flush=True)
         if not getattr(args, "no_browser", False):
 
